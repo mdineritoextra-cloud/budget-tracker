@@ -287,9 +287,6 @@
 
   <div class="drawer-divider"></div>
   <div class="drawer-section">Transactions</div>
-  <button class="drawer-btn" id="nav-import" onclick="setView('import');closeDrawer()">
-    <span class="d-icon">⬆</span> Import
-  </button>
   <button class="drawer-btn" id="nav-history" onclick="setView('history');closeDrawer()">
     <span class="d-icon">≡</span> History
   </button>
@@ -944,9 +941,15 @@ function init() {
   checkMonthRollover();
   applyTheme();
   processDueRecurring();
-  renderHeader(); renderView(); syncFromSheets();
-  // Push local preferences up on first load so Sheets stays in sync
-  savePreferencesLocal();
+  renderHeader(); renderView();
+  // Pull preferences first so budget shows correct value before full sync
+  get("getPreferences").then(r => {
+    if(r && r.data && r.data.income && !isNaN(parseFloat(r.data.income))) {
+      state.income = parseFloat(r.data.income);
+      try{localStorage.setItem("bt_income", state.income);}catch{}
+      renderHeader();
+    }
+  }).catch(()=>{}).finally(()=>{ syncFromSheets(); });
   buildColorSwatches(); setupCatPreview();
   document.querySelectorAll(".drawer-btn").forEach(b=>b.classList.remove("active"));
   const defNav = document.getElementById("nav-summary");
@@ -1072,8 +1075,7 @@ async function syncFromSheets() {
             } catch{}
           }
         } else {
-          // Sheet empty — push local values up WITHOUT overwriting if income > default
-          savePreferencesLocal();
+          // Sheet empty — do nothing, don't overwrite Sheets with local defaults
         }
       } catch(e) {
         // getPreferences not supported on this deployment — skip silently
@@ -1225,8 +1227,8 @@ function renderHeader() {
     const limitPct=Math.min(contributed/annualLimit*100,100);
     pFill.style.width=limitPct+"%"; pFill.style.background="var(--yellow)";
     bRow.innerHTML=`<span style="font-family:'DM Mono',monospace;color:${gain>=0?'var(--green)':'var(--red)'}">${gain>=0?'▲':'▼'} ${fmt(Math.abs(gain))} (${fmtPct(gainPct)})</span><span style="font-family:'DM Mono',monospace;color:var(--muted)">${fmt(contributed)} / ${fmt(annualLimit)} limit</span>`;
-  } else if(v==="add"||v==="import"||v==="recurring"||v==="debts"||v==="history") {
-    hTitle.textContent = v==="add"?"ADD EXPENSE":v==="import"?"IMPORT":v==="recurring"?"RECURRING":v==="debts"?"DEBTS & LOANS":"HISTORY";
+  } else if(v==="add"||v==="recurring"||v==="debts"||v==="history") {
+    hTitle.textContent = v==="add"?"ADD EXPENSE":v==="recurring"?"RECURRING":v==="debts"?"DEBTS & LOANS":"HISTORY";
     bAmt.style.display="none";
     pTrack.style.display="none";
     bRow.style.display="none";
@@ -1254,7 +1256,6 @@ function renderHeader() {
 // ---- VIEWS ----
 function setView(v) {
   state.view=v;
-  if(v==="import"){state.importPreview=null;state.importText="";}
   document.querySelectorAll(".drawer-btn").forEach(b=>b.classList.remove("active"));
   const nb=document.getElementById("nav-"+v); if(nb) nb.classList.add("active");
   renderHeader(); renderView();
@@ -1265,7 +1266,6 @@ function renderView() {
   if(state.view==="summary")   c.innerHTML=renderSummary();
   else if(state.view==="dashboard") c.innerHTML=renderDashboard();
   else if(state.view==="add") c.innerHTML=renderAdd();
-  else if(state.view==="import") c.innerHTML=state.importPreview?renderPreview():renderImport();
   else if(state.view==="history") c.innerHTML=renderHistory();
   else if(state.view==="savings") c.innerHTML=renderSavings();
   else if(state.view==="recurring") c.innerHTML=renderRecurring();
@@ -1538,9 +1538,7 @@ function renderSummary() {
   html+=`<div class="desktop-aside">
     <div class="card">
       <div class="section-label" style="margin-bottom:12px">Quick Add</div>
-      <button onclick="setView('add')" style="width:100%;padding:13px;border-radius:12px;border:none;background:linear-gradient(135deg,var(--blue),var(--purple));color:#fff;font-size:15px;font-weight:700;font-family:'DM Sans',sans-serif;cursor:pointer;margin-bottom:8px">+ Add Expense</button>
-      <button onclick="setView('import')" style="width:100%;padding:11px;border-radius:12px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:13px;font-family:'DM Sans',sans-serif;cursor:pointer;margin-bottom:6px">📋 Import Statement</button>
-      <button onclick="setView('import');setTimeout(()=>setImportMode('photo'),50)" style="width:100%;padding:11px;border-radius:12px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:13px;font-family:'DM Sans',sans-serif;cursor:pointer">📷 Scan Receipt</button>
+      <button onclick="setView('add')" style="width:100%;padding:13px;border-radius:12px;border:none;background:linear-gradient(135deg,var(--blue),var(--purple));color:#fff;font-size:15px;font-weight:700;font-family:'DM Sans',sans-serif;cursor:pointer">+ Add Expense</button>
     </div>
     ${state.debts.length>0?`<div class="card" style="cursor:pointer" onclick="setView('debts')">
       <div class="section-label" style="margin-bottom:10px">Debts</div>
@@ -2060,412 +2058,6 @@ function renderAdd() {
     <div class="field"><label class="field-label">Note (optional)</label><input type="text" placeholder="What did you buy?" id="fNote" value="${f.note||''}" oninput="updateForm('note',this.value)" /></div>
     <button class="submit-btn ${f.amount&&parseFloat(f.amount)>0?'ready':'disabled'}" onclick="submitAdd()">Add & Save to Sheets</button>
   </div>`;
-}
-
-// ---- IMPORT ----
-function renderImport() {
-  const mode = state.importMode;
-  return `<div class="form-wrap">
-    <div class="form-title">Import Statement</div>
-    <p style="font-size:13px;color:var(--muted);margin-bottom:18px">AI reads your statement or receipt and saves expenses to Google Sheets.</p>
-    <div class="mode-toggle" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0">
-      <button class="mode-btn ${mode==='paste'?'active':''}" onclick="setImportMode('paste')" style="border-radius:10px 0 0 10px">📋 Paste</button>
-      <button class="mode-btn ${mode==='file'?'active':''}" onclick="setImportMode('file')" style="border-radius:0;border-left:0;border-right:0">📎 File</button>
-      <button class="mode-btn ${mode==='photo'?'active':''}" onclick="setImportMode('photo')" style="border-radius:0 10px 10px 0">📷 Photo</button>
-    </div>
-
-    ${mode==='paste'?`
-      <textarea id="importText" placeholder="Paste your credit card statement here..." rows="9" style="width:100%;padding:13px 16px;border-radius:10px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px;font-family:'DM Mono',monospace;line-height:1.6;resize:vertical;outline:none;box-sizing:border-box;margin-top:4px" oninput="state.importText=this.value">${state.importText||''}</textarea>
-      <button class="submit-btn ready" style="margin-top:12px" onclick="parseStatement()" id="parseBtn">✨ Parse with AI</button>
-    `:mode==='file'?`
-      <div class="drop-zone" style="margin-top:4px" onclick="document.getElementById('fileInput').click()">
-        <div style="font-size:36px;margin-bottom:10px">📁</div>
-        <div style="font-weight:600;margin-bottom:4px">Tap to upload</div>
-        <div style="font-size:12px;color:var(--muted)">CSV or PDF supported</div>
-      </div>
-      <input type="file" id="fileInput" accept=".csv,.pdf,.txt" style="display:none" onchange="handleFile(this)" />
-    `:`
-      <!-- PHOTO MODE -->
-      <div style="margin-top:4px">
-        ${state.receiptPhotoPreview ? `
-          <div style="position:relative;margin-bottom:12px;border-radius:12px;overflow:hidden;border:1px solid var(--border)">
-            <img src="${state.receiptPhotoPreview}" style="width:100%;max-height:280px;object-fit:cover;display:block" />
-            <button onclick="clearReceiptPhoto()" style="position:absolute;top:8px;right:8px;width:28px;height:28px;border-radius:50%;border:none;background:rgba(0,0,0,0.6);color:#fff;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center">✕</button>
-          </div>
-          <button class="submit-btn ready" onclick="parseReceiptPhoto()" id="photoParseBtn">✨ Scan Receipt with AI</button>
-        ` : `
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:4px">
-            <div class="drop-zone" style="padding:24px 12px" onclick="document.getElementById('photoCapture').click()">
-              <div style="font-size:32px;margin-bottom:8px">📷</div>
-              <div style="font-weight:600;font-size:13px;margin-bottom:2px">Camera</div>
-              <div style="font-size:11px;color:var(--muted)">Take a photo</div>
-            </div>
-            <div class="drop-zone" style="padding:24px 12px" onclick="document.getElementById('photoGallery').click()">
-              <div style="font-size:32px;margin-bottom:8px">🖼️</div>
-              <div style="font-weight:600;font-size:13px;margin-bottom:2px">Gallery</div>
-              <div style="font-size:11px;color:var(--muted)">Choose photo</div>
-            </div>
-          </div>
-          <input type="file" id="photoCapture" accept="image/*" capture="environment" style="display:none" onchange="handleReceiptPhoto(this)" />
-          <input type="file" id="photoGallery" accept="image/*" style="display:none" onchange="handleReceiptPhoto(this)" />
-          <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;text-align:center;margin-top:8px">Supports receipts, invoices, and statements</div>
-        `}
-      </div>
-    `}
-    <div id="importError" style="display:none;margin-top:10px" class="error-msg"></div>
-  </div>`;
-}
-
-function renderPreview() {
-  const items = state.importPreview;
-  const selCount = items.filter(e => e._selected).length;
-  const totalAmt = items.filter(e => e._selected).reduce((s,e) => s + parseFloat(e.amount||0), 0);
-
-  let html = `<div class="form-wrap">
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-      <button onclick="state.importPreview=null;state.receiptPhotoPreview=null;renderView()" style="background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;padding:0;line-height:1">←</button>
-      <div class="form-title" style="margin:0">Review Draft</div>
-    </div>
-    <p style="font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:14px">
-      ${state.importSource==='photo'?'📷 Scanned from receipt · ':''}Tap a transaction to edit. Toggle ✓ to include/exclude.
-    </p>`;
-
-  // Summary bar
-  html += `<div style="background:var(--surface2);border-radius:12px;padding:12px 16px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center">
-    <div>
-      <div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);font-family:'DM Mono',monospace">Selected</div>
-      <div style="font-size:20px;font-weight:700;font-family:'DM Serif Display',serif;color:var(--red)">${fmt(totalAmt)}</div>
-    </div>
-    <div style="text-align:right">
-      <div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);font-family:'DM Mono',monospace">Transactions</div>
-      <div style="font-size:20px;font-weight:700">${selCount} / ${items.length}</div>
-    </div>
-  </div>`;
-
-  // Draft cards
-  html += `<div style="margin-bottom:16px">`;
-  items.forEach((e, idx) => {
-    const editing = state._editingPreviewId === e.id;
-    const catEmoji_ = catEmoji(e.category);
-    html += `<div style="background:var(--surface);border:1px solid ${e._selected?'rgba(88,166,255,0.3)':'var(--border)'};border-radius:14px;margin-bottom:8px;overflow:hidden;opacity:${e._selected?1:0.45};transition:opacity 0.2s">
-      <!-- Main row -->
-      <div style="display:flex;align-items:center;gap:10px;padding:12px 14px;cursor:pointer" onclick="togglePreview(${e.id})">
-        <div style="font-size:22px;flex-shrink:0">${catEmoji_}</div>
-        <div style="flex:1;min-width:0">
-          <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${e.note||e.placeName||e.category}</div>
-          <div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:1px">${e.transactionDate||''}${e.placeName?' · '+e.placeName:''}</div>
-        </div>
-        <div style="text-align:right;flex-shrink:0">
-          <div style="font-family:'DM Serif Display',serif;font-size:17px;color:var(--red)">${fmt(e.amount)}</div>
-          <div style="font-size:12px;color:var(--blue);margin-top:1px">${e._selected?'✓':'○'}</div>
-        </div>
-        <button onclick="event.stopPropagation();toggleEditPreview(${e.id})" style="background:none;border:1px solid var(--border);border-radius:8px;padding:4px 9px;font-size:11px;color:var(--muted);cursor:pointer;font-family:'DM Mono',monospace;flex-shrink:0">${editing?'done':'edit'}</button>
-      </div>
-      <!-- Edit panel -->
-      ${editing ? `<div style="border-top:1px solid var(--border);padding:12px 14px;background:var(--surface2)">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
-          <div>
-            <div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:5px">Amount</div>
-            <input type="number" value="${e.amount}" step="0.01" onchange="updatePreviewItem(${e.id},'amount',parseFloat(this.value))"
-              style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-family:'DM Serif Display',serif;font-size:18px;outline:none;box-sizing:border-box" />
-          </div>
-          <div>
-            <div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:5px">Date</div>
-            <input type="date" value="${e.transactionDate||todayStr()}" onchange="updatePreviewItem(${e.id},'transactionDate',this.value)"
-              style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-family:'DM Mono',monospace;font-size:12px;outline:none;box-sizing:border-box" />
-          </div>
-        </div>
-        <div style="margin-bottom:10px">
-          <div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:5px">Description</div>
-          <input type="text" value="${e.note||''}" onchange="updatePreviewItem(${e.id},'note',this.value)"
-            style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px;outline:none;box-sizing:border-box" />
-        </div>
-        <div style="margin-bottom:10px">
-          <div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:5px">Place</div>
-          <input type="text" value="${e.placeName||''}" onchange="updatePreviewItem(${e.id},'placeName',this.value)"
-            style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:13px;outline:none;box-sizing:border-box" />
-        </div>
-        <div>
-          <div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:6px">Category</div>
-          <div style="display:flex;flex-wrap:wrap;gap:6px">
-            ${state.categories.map(c=>`<button onclick="updatePreviewItem(${e.id},'category','${c.name.replace(/'/g,"\\'")}');renderView()" style="padding:5px 10px;border-radius:20px;border:1px solid ${e.category===c.name?'var(--accent)':'var(--border)'};background:${e.category===c.name?'rgba(88,166,255,0.15)':'transparent'};color:${e.category===c.name?'var(--accent)':'var(--muted)'};font-size:12px;cursor:pointer">${c.name}</button>`).join('')}
-          </div>
-        </div>
-      </div>` : ''}
-    </div>`;
-  });
-  html += `</div>`;
-
-  // Action buttons
-  html += `<div style="display:flex;gap:10px;position:sticky;bottom:0;background:var(--bg);padding:12px 0 4px">
-    <button class="btn-cancel" onclick="state.importPreview=null;state.receiptPhotoPreview=null;renderView()">← Back</button>
-    <button class="btn-save" style="flex:2;font-size:15px;border-radius:12px;padding:13px;opacity:${selCount>0?1:0.4}" onclick="${selCount>0?'confirmImport()':'void 0'}">
-      💾 Save ${selCount} Transaction${selCount!==1?'s':''} · ${fmt(totalAmt)}
-    </button>
-  </div>
-  </div>`;
-  return html;
-}
-
-function toggleEditPreview(id) {
-  state._editingPreviewId = state._editingPreviewId === id ? null : id;
-  renderView();
-}
-
-function updatePreviewItem(id, field, value) {
-  state.importPreview = state.importPreview.map(e => e.id === id ? {...e, [field]: value} : e);
-}
-
-// ---- HISTORY ----
-function renderHistory() {
-  const filtered=state.filterCat==="All"?state.expenses:state.expenses.filter(e=>e.category===state.filterCat);
-  let html=`<div style="padding:16px 0 0"><div style="padding:0 20px 4px"><div class="section-label">All Expenses</div></div><div class="filter-scroll">`;
-  ["All",...state.categories.map(c=>c.name)].forEach(cat=>{
-    html+=`<button class="filter-chip ${state.filterCat===cat?'active':''}" onclick="setFilter('${cat.replace(/'/g,"\\'")}'">${cat}</button>`;
-  });
-  html+=`</div><div style="padding:0 20px">`;
-  if(filtered.length===0){html+=`<div class="empty">No expenses found</div>`;}
-  else{filtered.forEach(e=>{html+=expCard(e);});}
-  html+=`</div></div>`;
-  return html;
-}
-
-// ---- ACTIONS ----
-function updateForm(field,value){
-  if(!state.addForm) state.addForm={category:state.categories[0].name,transactionDate:todayStr()};
-  state.addForm[field]=value;
-  const btn=document.querySelector(".submit-btn");
-  if(btn){const amt=parseFloat(state.addForm.amount);btn.className="submit-btn "+(amt>0?"ready":"disabled");}
-}
-function selectCat(name){if(!state.addForm)state.addForm={transactionDate:todayStr()};state.addForm.category=name;renderView();}
-function selectCard(name){if(!state.addForm)state.addForm={transactionDate:todayStr()};state.addForm.creditCard=name;state.selectedCard=name;renderView();}
-
-async function submitAdd(){
-  const f=state.addForm||{};
-  const amt=parseFloat(f.amount); if(!amt||amt<=0)return;
-  const cat=f.category||state.categories[0].name;
-  const entry={id:Date.now(),amount:amt,category:cat,note:f.note||"",placeName:f.placeName||"",transactionDate:f.transactionDate||todayStr(),date:new Date().toISOString(),userName:state.userName,creditCard:f.creditCard||state.selectedCard||""};
-  state.expenses=[entry,...state.expenses]; state.addForm={category:state.categories[0].name,transactionDate:todayStr()};
-  saveLocal(); renderHeader(); setView("dashboard");
-
-  // Budget warning toast
-  const limit=state.categoryBudgets[cat]||0;
-  if(limit>0){
-    const currentMonth = new Date().toISOString().slice(0,7);
-    const newTotal=state.expenses.filter(e=>e.category===cat&&(e.transactionDate||e.date||"").slice(0,7)===currentMonth).reduce((s,e)=>s+parseFloat(e.amount||0),0);
-    if(newTotal>limit) showToast(`🚨 Over ${cat} budget by ${fmt(newTotal-limit)}`,"#f85149");
-    else if(newTotal/limit>=0.8) showToast(`⚠️ ${Math.round(newTotal/limit*100)}% of ${cat} budget used`,"#e3b341");
-    else showToast("✓ Expense added","#3fb950");
-  } else {
-    showToast("Saving to Sheets... ☁️","#58a6ff");
-  }
-  try{await sheetsAdd(entry);await syncFromSheets();if(!limit) showToast("✓ Saved to Google Sheets!");}
-  catch{showToast("Saved locally — sync failed","#e3b341");}
-}
-
-async function deleteExp(id){
-  state.expenses=state.expenses.filter(e=>e.id!=id);
-  saveLocal();renderHeader();renderView();
-  try{await sheetsDelete(id);showToast("Deleted","#f85149");}
-  catch{showToast("Deleted locally","#e3b341");}
-}
-
-function setFilter(cat){state.filterCat=cat;renderView();}
-function setImportMode(m) {
-  state.importMode = m;
-  if(m !== 'photo') state.receiptPhotoPreview = null;
-  renderView();
-}
-
-async function handleReceiptPhoto(input) {
-  const file = input.files[0]; if(!file) return;
-  const dataUrl = await resizeImageIfNeeded(file, 1600);
-  state.receiptPhotoPreview = dataUrl;
-  renderView();
-}
-
-function clearReceiptPhoto() {
-  state.receiptPhotoPreview = null;
-  renderView();
-}
-
-function resizeImageIfNeeded(file, maxDim) {
-  return new Promise(resolve => {
-    const reader = new FileReader();
-    reader.onload = ev => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        let w = img.width, h = img.height;
-        if(w > maxDim || h > maxDim) {
-          const ratio = Math.min(maxDim/w, maxDim/h);
-          w = Math.round(w * ratio); h = Math.round(h * ratio);
-        }
-        canvas.width = w; canvas.height = h;
-        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL('image/jpeg', 0.88));
-      };
-      img.src = ev.target.result;
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-async function parseReceiptPhoto() {
-  const dataUrl = state.receiptPhotoPreview;
-  if(!dataUrl) return;
-  const btn = document.getElementById('photoParseBtn');
-  const errEl = document.getElementById('importError');
-  if(btn) { btn.textContent = '⏳ Scanning...'; btn.disabled = true; }
-  errEl.style.display = 'none';
-  const [meta, b64] = dataUrl.split(',');
-  const mediaType = meta.match(/:(.*?);/)[1];
-  const catNames = state.categories.map(c => c.name).join(', ');
-  try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json','anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514', max_tokens: 4096,
-        messages: [{ role: 'user', content: [
-          { type: 'image', source: { type: 'base64', media_type: mediaType, data: b64 } },
-          { type: 'text', text: `You are a receipt scanner. Extract all expense transactions from this receipt or statement image.
-
-Return ONLY a valid JSON array starting with [ and ending with ]. No markdown, no explanation.
-
-Each object must have exactly:
-- "amount": positive number (the total charge)
-- "note": string (item or merchant description, cleaned up)
-- "placeName": string (store or restaurant name from the receipt header)
-- "category": must be exactly one of [${catNames}]
-- "transactionDate": "YYYY-MM-DD" (use date on receipt; if not visible use ${todayStr()})
-
-Rules:
-- Single-merchant receipt (e.g. Starbucks) → return ONE item for the grand total
-- Multi-merchant statement → one item per merchant
-- Skip tax lines, subtotals, change-due rows
-- Amount = final charge after tax and tip if visible
-- Always return at least one item if any purchase is visible` }
-        ]}]
-      })
-    });
-    if(!res.ok) {
-      const e = await res.text();
-      errEl.style.display='block'; errEl.textContent=`API error ${res.status}: ${e.slice(0,120)}`;
-      if(btn){btn.textContent='✨ Scan Receipt with AI';btn.disabled=false;} return;
-    }
-    const data = await res.json();
-    const rawText = ((data.content&&data.content.find(b=>b.type==='text'))||{text:'[]'}).text||'[]';
-    const match = rawText.match(/\[[\s\S]*\]/);
-    let parsed; try{parsed=JSON.parse(match?match[0]:'[]');}catch{parsed=[];}
-    parsed = parsed.filter(e=>e.amount>0);
-    if(!Array.isArray(parsed)||!parsed.length) {
-      errEl.style.display='block'; errEl.textContent='Could not find transactions. Try a clearer photo.';
-      if(btn){btn.textContent='✨ Scan Receipt with AI';btn.disabled=false;} return;
-    }
-    state.importPreview = parsed.map((e,i)=>({...e,amount:Math.abs(parseFloat(e.amount)||0),id:Date.now()+i,date:new Date().toISOString(),userName:state.userName,creditCard:state.selectedCard||'',_selected:true}));
-    state.importSource = 'photo';
-    state._editingPreviewId = null;
-    renderView();
-  } catch(err) {
-    errEl.style.display='block'; errEl.textContent='Scan failed: '+(err.message||'Unknown error');
-    console.error('parseReceiptPhoto error:', err);
-    if(btn){btn.textContent='✨ Scan Receipt with AI';btn.disabled=false;}
-  }
-}
-
-async function parseStatement(){
-  const text=state.importText||(document.getElementById("importText")||{value:''}).value;
-  if(!text.trim())return;
-  const btn=document.getElementById("parseBtn");
-  const errEl=document.getElementById("importError");
-  if(btn){btn.textContent="⏳ Analyzing...";btn.disabled=true;}
-  errEl.style.display="none";
-  const catNames=state.categories.map(c=>c.name).join(", ");
-  try{
-    const res=await fetch("https://api.anthropic.com/v1/messages",{
-      method:"POST",
-      headers:{"Content-Type":"application/json","anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-access":"true"},
-      body:JSON.stringify({
-        model:"claude-sonnet-4-20250514",
-        max_tokens:4096,
-        messages:[{role:"user",content:`You are a financial data parser. Extract all expense/purchase transactions from this bank or credit card statement.
-
-Return ONLY a valid JSON array — no explanation, no markdown fences, no extra text. Just the raw JSON array starting with [ and ending with ].
-
-Each object must have exactly these fields:
-- "amount": positive number (absolute value, never negative)
-- "note": merchant/description string (clean it up, remove account numbers)
-- "placeName": short merchant name
-- "category": must be exactly one of [${catNames}]
-- "transactionDate": "YYYY-MM-DD" format
-
-Rules:
-- SKIP payments, credits, refunds, transfers, mobile payments, thank you payments
-- SKIP rows where amount is 0 or negative (those are credits/payments)
-- If unsure of category, use "📦 Other"
-- Amount must always be positive
-
-Statement:
-${text}`}]
-      })
-    });
-    if(!res.ok){
-      const err=await res.text();
-      errEl.style.display="block";
-      errEl.textContent=`API error ${res.status}: ${err.slice(0,120)}`;
-      if(btn){btn.textContent="✨ Parse with AI";btn.disabled=false;}
-      return;
-    }
-    const data=await res.json();
-    const rawText=((data.content&&data.content.find(b=>b.type==="text"))||{text:"[]"}).text||"[]";
-    // Extract JSON array robustly
-    const match = rawText.match(/\[[\s\S]*\]/);
-    const jsonStr = match ? match[0] : "[]";
-    let parsed;
-    try { parsed = JSON.parse(jsonStr); } catch(e) { parsed = []; }
-    // Filter out any payments/credits that slipped through
-    parsed = parsed.filter(e => e.amount > 0);
-    if(!Array.isArray(parsed)||!parsed.length){
-      errEl.style.display="block";
-      errEl.textContent="No expense transactions found. Make sure to paste actual statement rows.";
-      if(btn){btn.textContent="✨ Parse with AI";btn.disabled=false;}
-    } else {
-      state.importPreview=parsed.map((e,i)=>({
-        ...e,
-        amount: Math.abs(parseFloat(e.amount)||0),
-        id:Date.now()+i,
-        date:new Date().toISOString(),
-        userName:state.userName,
-        creditCard:state.selectedCard||"",
-        _selected:true
-      }));
-      renderView();
-    }
-  } catch(err) {
-    errEl.style.display="block";
-    errEl.textContent="Parse failed: "+(err.message||"Unknown error")+". Check console for details.";
-    console.error("parseStatement error:", err);
-    if(btn){btn.textContent="✨ Parse with AI";btn.disabled=false;}
-  }
-}
-
-async function handleFile(input){
-  const file=input.files[0];if(!file)return;
-  const text=await file.text();state.importText=text;state.importMode="paste";renderView();
-  setTimeout(()=>{if(document.getElementById("importText"))document.getElementById("importText").value=text;},50);
-}
-
-function togglePreview(id){state.importPreview=state.importPreview.map(e=>e.id===id?{...e,_selected:!e._selected}:e);renderView();}
-
-async function confirmImport(){
-  const toAdd=state.importPreview.filter(e=>e._selected).map(({_selected,...e})=>e);
-  state.expenses=[...toAdd,...state.expenses];state.importPreview=null;state.importText="";
-  saveLocal();renderHeader();setView("dashboard");
-  showToast(`Saving ${toAdd.length} to Sheets... ☁️`,"#58a6ff");
-  let saved=0;
-  for(const e of toAdd){try{await sheetsAdd(e);saved++;}catch{}}
-  await syncFromSheets();showToast(`✓ ${saved}/${toAdd.length} saved!`);
 }
 
 // ---- BROKERAGE ----
