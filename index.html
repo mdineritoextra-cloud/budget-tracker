@@ -373,11 +373,16 @@
 
 <div class="modal-overlay" id="modal-name" style="display:none">
   <div class="modal-box">
-    <div class="modal-title">Your Name</div>
-    <input type="text" id="nameInput" placeholder="e.g. Alex" class="modal-input" />
-    <div class="modal-actions">
+    <div class="modal-title">Select User</div>
+    <div id="userChips" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px"></div>
+    <label class="field-label">Add New User</label>
+    <div style="display:flex;gap:8px">
+      <input type="text" id="nameInput" placeholder="e.g. Alex" class="modal-input" style="margin-bottom:0;flex:1" />
+      <button onclick="addNewUser()" style="padding:10px 16px;border-radius:10px;border:none;background:var(--blue);color:#fff;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;white-space:nowrap">+ Add</button>
+    </div>
+    <div class="modal-actions" style="margin-top:16px">
       <button class="btn-cancel" onclick="closeModal('name')">Cancel</button>
-      <button class="btn-save" onclick="saveName()">Save</button>
+      <button class="btn-save" onclick="saveName()">Select</button>
     </div>
   </div>
 </div>
@@ -875,7 +880,7 @@ const CREDIT_CARDS = [
 
 let state = {
   // Budget
-  expenses:[], income:3000, userName:"", categories:[...DEFAULT_CATS],
+  expenses:[], income:3000, userName:"", users:[], categories:[...DEFAULT_CATS],
   categoryBudgets:{}, // { "🍔 Food": 500, ... } — the limits, never reset
   budgetHistory:{},   // { "2025-06": { "🍔 Food": { limit:500, spent:320 } } }
   // Credit card balances & settings
@@ -916,6 +921,9 @@ function init() {
   try {
     const si = localStorage.getItem("bt_income"); if(si) state.income=parseFloat(si);
     const sn = localStorage.getItem("bt_username"); if(sn) state.userName=sn;
+    const su = localStorage.getItem("bt_users"); if(su) state.users=JSON.parse(su);
+    // Make sure current user is in the list
+    if(state.userName && !state.users.includes(state.userName)) state.users.push(state.userName);
     const sc = localStorage.getItem("bt_categories"); if(sc) state.categories=JSON.parse(sc);
     const se = localStorage.getItem("bt_expenses"); if(se) state.expenses=JSON.parse(se);
     const sb = localStorage.getItem("bt_cat_budgets"); if(sb) state.categoryBudgets=JSON.parse(sb);
@@ -1022,12 +1030,55 @@ async function syncFromSheets() {
       state.debts = data.debts;
       try{ localStorage.setItem("bt_debts", JSON.stringify(state.debts)); }catch{}
     }
-    if (data.preferences && typeof data.preferences === "object") {
+    if (data.preferences && typeof data.preferences === "object" && Object.keys(data.preferences).length > 0) {
       const p = data.preferences;
-      if (p.income   !== undefined) { state.income   = parseFloat(p.income)||state.income; try{localStorage.setItem("bt_income",   state.income);}catch{} }
-      if (p.theme    !== undefined) { state.theme    = p.theme;    try{localStorage.setItem("bt_theme",    state.theme);}catch{} applyTheme(); }
-      if (p.currency !== undefined) { state.currency = p.currency; try{localStorage.setItem("bt_currency", state.currency);}catch{} }
+      if (p.income !== undefined && p.income !== "" && !isNaN(parseFloat(p.income))) {
+        state.income = parseFloat(p.income);
+        try{ localStorage.setItem("bt_income", state.income); }catch{}
+      }
+      if (p.theme    !== undefined && p.theme)    { state.theme    = p.theme;    try{localStorage.setItem("bt_theme",    state.theme);}catch{}    applyTheme(); }
+      if (p.currency !== undefined && p.currency) { state.currency = p.currency; try{localStorage.setItem("bt_currency", state.currency);}catch{} }
       if (p.userName !== undefined && p.userName) { state.userName = p.userName; try{localStorage.setItem("bt_username", state.userName);}catch{} }
+      if (p.users !== undefined && p.users) {
+        try {
+          const parsed = JSON.parse(p.users);
+          if (Array.isArray(parsed)) {
+            const merged = [...new Set([...parsed, ...state.users])].filter(Boolean);
+            state.users = merged;
+            try{ localStorage.setItem("bt_users", JSON.stringify(state.users)); }catch{}
+          }
+        } catch{}
+      }
+    } else {
+      // Preferences not in getAll — try fetching them separately
+      try {
+        const prefs = await get("getPreferences");
+        if (prefs && prefs.data && Object.keys(prefs.data).length > 0) {
+          const p = prefs.data;
+          if (p.income !== undefined && p.income !== "" && !isNaN(parseFloat(p.income))) {
+            state.income = parseFloat(p.income);
+            try{ localStorage.setItem("bt_income", state.income); }catch{}
+          }
+          if (p.theme    && p.theme)    { state.theme    = p.theme;    try{localStorage.setItem("bt_theme",    state.theme);}catch{}    applyTheme(); }
+          if (p.currency && p.currency) { state.currency = p.currency; try{localStorage.setItem("bt_currency", state.currency);}catch{} }
+          if (p.userName && p.userName) { state.userName = p.userName; try{localStorage.setItem("bt_username", state.userName);}catch{} }
+          if (p.users) {
+            try {
+              const parsed = JSON.parse(p.users);
+              if(Array.isArray(parsed)){
+                state.users = [...new Set([...parsed,...state.users])].filter(Boolean);
+                try{localStorage.setItem("bt_users", JSON.stringify(state.users));}catch{}
+              }
+            } catch{}
+          }
+        } else {
+          // Sheet empty — push local values up WITHOUT overwriting if income > default
+          savePreferencesLocal();
+        }
+      } catch(e) {
+        // getPreferences not supported on this deployment — skip silently
+        console.warn("getPreferences not available:", e.message);
+      }
     }
 
     btn.className="sync-btn ok"; icon.className=""; icon.textContent="✓"; label.textContent="Synced";
@@ -1074,10 +1125,12 @@ function savePreferencesLocal() {
     theme:    state.theme,
     currency: state.currency,
     userName: state.userName,
+    users:    JSON.stringify(state.users),
   };
   try{ localStorage.setItem("bt_income",   String(state.income)); }catch{}
   try{ localStorage.setItem("bt_theme",    state.theme); }catch{}
   try{ localStorage.setItem("bt_currency", state.currency); }catch{}
+  try{ localStorage.setItem("bt_users",    JSON.stringify(state.users)); }catch{}
   post("savePreferences", { data: prefs }).catch(()=>{});
 }
 
@@ -4144,7 +4197,7 @@ function deleteRecurring(id) {
 
 function openModal(id){
   if(id==="income")document.getElementById("incomeInput").value=state.income;
-  if(id==="name")document.getElementById("nameInput").value=state.userName;
+  if(id==="name"){ document.getElementById("nameInput").value=""; renderUserChips(); }
   if(id==="category"){document.getElementById("catName").value="";document.getElementById("catEmoji").value="🏷️";updateCatPreview();}
   if(id==="trade"){document.getElementById("tradeTicker").value="";document.getElementById("tradeName").value="";document.getElementById("tradeShares").value="";document.getElementById("tradePrice").value="";document.getElementById("tradeCurrent").value="";document.getElementById("tradeDate").value=todayStr();document.getElementById("tradeNotes").value="";}
   document.getElementById("modal-"+id).style.display="flex";
@@ -4152,7 +4205,48 @@ function openModal(id){
 }
 function closeModal(id){document.getElementById("modal-"+id).style.display="none";}
 function saveIncome(){const v=parseFloat(document.getElementById("incomeInput").value);if(v>0){state.income=v;try{localStorage.setItem("bt_income",v);}catch{}}closeModal("income");renderHeader();showToast("Budget updated!");savePreferencesLocal();}
-function saveName(){state.userName=document.getElementById("nameInput").value.trim();try{localStorage.setItem("bt_username",state.userName);}catch{}closeModal("name");renderHeader();renderView();showToast("Name saved!");savePreferencesLocal();}
+function renderUserChips() {
+  const container = document.getElementById("userChips");
+  if(!container) return;
+  if(state.users.length === 0) {
+    container.innerHTML = `<div style="font-size:12px;color:var(--muted);font-family:'DM Mono',monospace">No users yet — add one below</div>`;
+    return;
+  }
+  container.innerHTML = state.users.map(u => `
+    <div style="display:flex;align-items:center;gap:6px;padding:7px 12px;border-radius:20px;border:2px solid ${u===state.userName?'var(--blue)':'var(--border)'};background:${u===state.userName?'rgba(88,166,255,0.12)':'var(--surface2)'};cursor:pointer" onclick="selectUserChip('${u.replace(/'/g,"\\'")}')">
+      <span style="font-size:13px;font-weight:600;color:${u===state.userName?'var(--blue)':'var(--text)'}">${u}</span>
+      ${u===state.userName?'<span style="font-size:10px;color:var(--blue)">✓</span>':''}
+      <span onclick="event.stopPropagation();deleteUser('${u.replace(/'/g,"\\'")}');" style="font-size:11px;color:var(--muted);margin-left:2px;cursor:pointer">✕</span>
+    </div>
+  `).join("");
+}
+function selectUserChip(name) {
+  state.userName = name;
+  renderUserChips();
+}
+function addNewUser() {
+  const name = (document.getElementById("nameInput").value||"").trim();
+  if(!name) { showToast("Enter a name first","#f85149"); return; }
+  if(!state.users.includes(name)) state.users.push(name);
+  state.userName = name;
+  document.getElementById("nameInput").value = "";
+  renderUserChips();
+}
+function deleteUser(name) {
+  state.users = state.users.filter(u => u !== name);
+  if(state.userName === name) state.userName = state.users[0] || "";
+  renderUserChips();
+}
+function saveName() {
+  if(!state.userName && state.users.length > 0) state.userName = state.users[0];
+  const typed = (document.getElementById("nameInput").value||"").trim();
+  if(typed && !state.users.includes(typed)) { state.users.push(typed); state.userName = typed; }
+  try{ localStorage.setItem("bt_username", state.userName); }catch{}
+  try{ localStorage.setItem("bt_users",    JSON.stringify(state.users)); }catch{}
+  closeModal("name"); renderHeader(); renderView();
+  showToast("User set to " + (state.userName||"none") + "!");
+  savePreferencesLocal();
+}
 function saveCategory(){const name=document.getElementById("catName").value.trim();if(!name)return;const fullName=document.getElementById("catEmoji").value+" "+name;state.categories=[...state.categories,{name:fullName,color:state.selectedCatColor}];try{localStorage.setItem("bt_categories",JSON.stringify(state.categories));}catch{}closeModal("category");renderView();showToast(`"${fullName}" added!`);}
 
 function buildColorSwatches(){
