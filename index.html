@@ -1286,17 +1286,22 @@ function setView(v) {
 
 function renderView() {
   const c=document.getElementById("content");
-  if(state.view==="summary")   c.innerHTML=renderSummary();
-  else if(state.view==="dashboard") c.innerHTML=renderDashboard();
-  else if(state.view==="add") c.innerHTML=renderAdd();
-  else if(state.view==="history") c.innerHTML=renderHistory();
-  else if(state.view==="savings") c.innerHTML=renderSavings();
-  else if(state.view==="recurring") c.innerHTML=renderRecurring();
-  else if(state.view==="debts") c.innerHTML=renderDebts();
-  else if(state.view==="roth") c.innerHTML=renderRoth();
-  else if(state.view==="brokerage") c.innerHTML=renderBrokerage();
-  else if(state.view==="401k") c.innerHTML=render401k();
-  attachListeners();
+  try {
+    if(state.view==="summary")   c.innerHTML=renderSummary();
+    else if(state.view==="dashboard") c.innerHTML=renderDashboard();
+    else if(state.view==="add") c.innerHTML=renderAdd();
+    else if(state.view==="history") c.innerHTML=renderHistory();
+    else if(state.view==="savings") c.innerHTML=renderSavings();
+    else if(state.view==="recurring") c.innerHTML=renderRecurring();
+    else if(state.view==="debts") c.innerHTML=renderDebts();
+    else if(state.view==="roth") c.innerHTML=renderRoth();
+    else if(state.view==="brokerage") c.innerHTML=renderBrokerage();
+    else if(state.view==="401k") c.innerHTML=render401k();
+    attachListeners();
+  } catch(e) {
+    console.error("renderView error:", e);
+    c.innerHTML=`<div class="pad"><div class="empty">⚠️ Render error: ${e.message}<br><small style="font-family:'DM Mono',monospace">${e.stack?.split('\n')[1]||''}</small></div></div>`;
+  }
 }
 
 // ---- SUMMARY DASHBOARD ----
@@ -1763,36 +1768,38 @@ function renderDashboard() {
   if(monthExpenses.length > 0) {
     const byUser = {};
     monthExpenses.forEach(e => {
-      const u = e.userName || "Unknown";
+      const u = (e.userName||"Unknown").trim() || "Unknown";
       byUser[u] = (byUser[u]||0) + parseFloat(e.amount||0);
     });
     const users = Object.entries(byUser).sort((a,b) => b[1]-a[1]);
-    const totalSpentUsers = users.reduce((s,[,v])=>s+v, 0);
-    html += `<div class="section-label" style="margin-top:20px">Spending by User</div>
-    <div class="card" style="padding:14px 16px">
-      ${users.map(([name, amt]) => {
-        const pct = totalSpentUsers > 0 ? (amt/totalSpentUsers*100) : 0;
-        return `<div style="margin-bottom:12px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
-            <div style="display:flex;align-items:center;gap:7px">
-              <span style="font-size:16px">👤</span>
-              <span style="font-size:13px;font-weight:600">${name}</span>
+    if(users.length > 0) {
+      const totalSpentUsers = users.reduce((s,[,v])=>s+v, 0);
+      html += `<div class="section-label" style="margin-top:20px">Spending by User</div>
+      <div class="card" style="padding:14px 16px">
+        ${users.map(([name, amt]) => {
+          const pct = totalSpentUsers > 0 ? (amt/totalSpentUsers*100) : 0;
+          return `<div style="margin-bottom:12px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+              <div style="display:flex;align-items:center;gap:7px">
+                <span style="font-size:16px">👤</span>
+                <span style="font-size:13px;font-weight:600">${name}</span>
+              </div>
+              <div style="text-align:right">
+                <span style="font-family:'DM Serif Display',serif;font-size:15px;color:var(--red)">${fmt(amt)}</span>
+                <span style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-left:6px">${pct.toFixed(0)}%</span>
+              </div>
             </div>
-            <div style="text-align:right">
-              <span style="font-family:'DM Serif Display',serif;font-size:15px;color:var(--red)">${fmt(amt)}</span>
-              <span style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-left:6px">${pct.toFixed(0)}%</span>
+            <div class="cat-bar-track" style="height:5px">
+              <div class="cat-bar-fill" style="width:${pct}%;background:var(--blue)"></div>
             </div>
-          </div>
-          <div class="cat-bar-track" style="height:5px">
-            <div class="cat-bar-fill" style="width:${pct}%;background:var(--blue)"></div>
-          </div>
-        </div>`;
-      }).join("")}
-      <div style="display:flex;justify-content:space-between;border-top:1px solid var(--border);padding-top:10px;margin-top:2px">
-        <span style="font-size:12px;color:var(--muted);font-family:'DM Mono',monospace">TOTAL</span>
-        <span style="font-family:'DM Serif Display',serif;font-size:15px">${fmt(totalSpentUsers)}</span>
-      </div>
-    </div>`;
+          </div>`;
+        }).join("")}
+        <div style="display:flex;justify-content:space-between;border-top:1px solid var(--border);padding-top:10px;margin-top:2px">
+          <span style="font-size:12px;color:var(--muted);font-family:'DM Mono',monospace">TOTAL</span>
+          <span style="font-family:'DM Serif Display',serif;font-size:15px">${fmt(totalSpentUsers)}</span>
+        </div>
+      </div>`;
+    }
   }
 
   if(monthExpenses.length>0){
