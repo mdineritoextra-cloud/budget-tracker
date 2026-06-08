@@ -443,18 +443,19 @@
 <!-- SAVINGS MODALS -->
 <div class="modal-overlay" id="modal-new-account" style="display:none">
   <div class="modal-box">
-    <div class="modal-title">New Savings Account</div>
+    <div class="modal-title" id="accModalTitle">New Savings Account</div>
+    <input type="hidden" id="accEditId" value="" />
     <label class="field-label">Account Name</label>
     <input type="text" id="accName" placeholder="e.g. Emergency Fund" class="modal-input" />
     <label class="field-label">Bank / Institution</label>
     <input type="text" id="accBank" placeholder="e.g. Marcus, Ally, Chase" class="modal-input" />
-    <label class="field-label">Starting Balance ($)</label>
+    <label class="field-label">Current Balance ($)</label>
     <input type="number" id="accBal" placeholder="0.00" class="modal-input" style="font-family:'DM Serif Display',serif;font-size:22px" />
     <label class="field-label">Goal Amount ($) — optional</label>
     <input type="number" id="accGoal" placeholder="e.g. 10000" class="modal-input" />
     <div class="modal-actions">
       <button class="btn-cancel" onclick="closeModal('new-account')">Cancel</button>
-      <button class="btn-save-green" onclick="saveNewAccount()">Create</button>
+      <button class="btn-save-green" id="accSaveBtn" onclick="saveNewAccount()">Create</button>
     </div>
   </div>
 </div>
@@ -893,6 +894,7 @@ let state = {
   cardSettings:{},
   viewMonth: new Date().toISOString().slice(0,7), // "YYYY-MM" currently viewing
   view:"summary", filterCat:"All", selectedCatColor:CAT_COLORS[8], selectedCard:"",
+  historyMonth: "", historyFrom: "", historyTo: "",
   importMode:"paste", importPreview:null, importText:"", addForm:null,
   receiptPhotoPreview: null, importSource: "text", // "text" | "photo"
   // Savings
@@ -1098,6 +1100,15 @@ async function syncFromSheets() {
           }
         } catch{}
       }
+      if (p.recurring !== undefined && p.recurring) {
+        try {
+          const parsed = JSON.parse(p.recurring);
+          if (Array.isArray(parsed)) {
+            state.recurring = parsed;
+            try{ localStorage.setItem("bt_recurring", JSON.stringify(state.recurring)); }catch{}
+          }
+        } catch{}
+      }
     } else {
       // Preferences not in getAll — try fetching them separately
       try {
@@ -1143,6 +1154,7 @@ function saveSavingsLocal() {
   try{ localStorage.setItem("bt_savings", JSON.stringify(state.savingsAccounts)); }catch{}
   savingsPush().catch(()=>{});
 }
+async function savingsSheetSave() { return savingsPush(); }
 function saveTradesLocal()  {
   try{ localStorage.setItem("bt_trades", JSON.stringify(state.trades)); }catch{}
   tradesPush().catch(()=>{});
@@ -1178,6 +1190,7 @@ function savePreferencesLocal() {
     categoryBudgets: JSON.stringify(state.categoryBudgets),
     cardSettings:    JSON.stringify(state.cardSettings),
     creditCards:     JSON.stringify(state.creditCards),
+    recurring:       JSON.stringify(state.recurring),
   };
   try{ localStorage.setItem("bt_income",          String(state.income)); }catch{}
   try{ localStorage.setItem("bt_theme",           state.theme); }catch{}
@@ -1187,6 +1200,7 @@ function savePreferencesLocal() {
   try{ localStorage.setItem("bt_cat_budgets",     JSON.stringify(state.categoryBudgets)); }catch{}
   try{ localStorage.setItem("bt_card_settings",   JSON.stringify(state.cardSettings)); }catch{}
   try{ localStorage.setItem("bt_credit_cards",    JSON.stringify(state.creditCards)); }catch{}
+  try{ localStorage.setItem("bt_recurring",       JSON.stringify(state.recurring)); }catch{}
   post("savePreferences", { data: prefs }).catch(()=>{});
 }
 
@@ -1867,7 +1881,7 @@ function renderSavings() {
       <div class="section-label" style="margin-bottom:0">My Accounts</div>
       <div style="display:flex;gap:8px">
         <button class="section-action" style="color:var(--green);border:1px solid rgba(63,185,80,0.3);padding:4px 10px;border-radius:8px" onclick="openSavingsImport()">⬆ Import</button>
-        <button class="section-action" onclick="openModal('new-account')">+ New Account</button>
+        <button class="section-action" onclick="openNewSavingsAccount()">+ New Account</button>
       </div>
     </div>`;
     if(state.savingsAccounts.length===0){
@@ -1891,6 +1905,7 @@ function renderSavings() {
           <div style="display:flex;gap:8px;margin-top:12px">
             <button class="btn-half btn-deposit" onclick="openSavingsTxn(${acc.id},'deposit')">⬆ Deposit</button>
             <button class="btn-half btn-withdraw" onclick="openSavingsTxn(${acc.id},'withdraw')">⬇ Withdraw</button>
+            <button class="btn-half" style="background:var(--surface2);color:var(--muted);border:1px solid var(--border);flex:0.5" onclick="openEditAccount(${acc.id})">✏️</button>
             <button style="padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;font-size:11px;font-family:'DM Mono',monospace" onclick="deleteAccount(${acc.id})">🗑</button>
           </div>
           ${txnCount>0?`<div style="font-size:11px;color:var(--muted);margin-top:10px;font-family:'DM Mono',monospace;cursor:pointer" onclick="state.savingsTab='history';state.filterSavingsAcc=${acc.id};renderView()">${txnCount} transaction${txnCount!==1?'s':''} →</div>`:''}
@@ -2150,7 +2165,7 @@ function renderRoth() {
 // ---- ADD EXPENSE ----
 function renderAdd() {
   const _cm = new Date().toISOString().slice(0,7);
-  const catGrid = state.categories.map(c=>{
+  const catGrid = state.categories.map((c,i)=>{
     const active=((state.addForm&&state.addForm.category)||state.categories[0].name)===c.name;
     const limit=state.categoryBudgets[c.name]||0;
     const spent=state.expenses.filter(e=>e.category===c.name&&(e.transactionDate||e.date||"").slice(0,7)===_cm).reduce((s,e)=>s+parseFloat(e.amount||0),0);
@@ -2160,11 +2175,12 @@ function renderAdd() {
     const borderCol=active?(over?'var(--red)':near?'var(--yellow)':c.color):(over?'rgba(248,81,73,0.35)':near?'rgba(227,179,65,0.3)':'');
     const bgCol=active?`${c.color}22`:'';
     const txtCol=active?(over?'var(--red)':near?'var(--yellow)':c.color):'';
-    return `<button class="cat-chip ${active?'active':''}" style="${borderCol?`border-color:${borderCol};`:''}${bgCol?`background:${bgCol};`:''}${txtCol?`color:${txtCol};`:''}" onclick="selectCat('${c.name.replace(/'/g,"\\'")}')"><span>${c.name}</span>${badge}</button>`;
+    return `<button class="cat-chip ${active?'active':''}" style="${borderCol?`border-color:${borderCol};`:''}${bgCol?`background:${bgCol};`:''}${txtCol?`color:${txtCol};`:''}" onclick="selectCat(${i})"><span>${c.name}</span>${badge}</button>`;
   }).join("");
-  const ccGrid = CREDIT_CARDS().map(cc=>{
+  const cards = CREDIT_CARDS();
+  const ccGrid = cards.map((cc,i)=>{
     const active=((state.addForm&&state.addForm.creditCard)||state.selectedCard)===cc.name;
-    return `<button class="cc-chip ${active?'active':''}" style="${active?`border-color:${cc.color};background:${cc.color}18;color:${cc.color}`:''}" onclick="selectCard('${cc.name.replace(/'/g,"\\'")}')"><span class="cc-icon">${cc.icon}</span><span class="cc-name">${cc.name}</span></button>`;
+    return `<button class="cc-chip ${active?'active':''}" style="${active?`border-color:${cc.color};background:${cc.color}18;color:${cc.color}`:''}" onclick="selectCard(${i})"><span class="cc-icon">${cc.icon}</span><span class="cc-name">${cc.name}</span></button>`;
   }).join("");
   const f=state.addForm||{};
   return `<div class="form-wrap">
@@ -2183,39 +2199,101 @@ function renderAdd() {
   </div>`;
 }
 
+function selectCat(i) {
+  const cat = state.categories[i];
+  if(!cat) return;
+  if(!state.addForm) state.addForm = {};
+  state.addForm.category = cat.name;
+  renderView();
+}
+
+function selectCard(i) {
+  const card = CREDIT_CARDS()[i];
+  if(!card) return;
+  state.selectedCard = card.name;
+  if(!state.addForm) state.addForm = {};
+  state.addForm.creditCard = card.name;
+  renderView();
+}
+
 function setFilter(cat){state.filterCat=cat;renderView();}
 
 // ---- HISTORY ----
 function renderHistory() {
-  const vm = state.viewMonth || new Date().toISOString().slice(0,7);
-  let allMonthExp = state.expenses.filter(e => (e.transactionDate||e.date||"").slice(0,7) === vm);
-  const cats = ["All", ...new Set(allMonthExp.map(e=>e.category).filter(Boolean))];
+  // historyMonth: "YYYY-MM" | "all" | "range"
+  if(!state.historyMonth) state.historyMonth = new Date().toISOString().slice(0,7);
+  if(!state.historyFrom)  state.historyFrom  = "";
+  if(!state.historyTo)    state.historyTo    = "";
 
-  let expenses = state.filterCat && state.filterCat !== "All"
-    ? allMonthExp.filter(e => e.category === state.filterCat)
-    : allMonthExp;
+  const mode = state.historyMonth;
 
-  expenses = [...expenses].sort((a,b) => new Date(b.transactionDate||b.date) - new Date(a.transactionDate||a.date));
+  // Build expense list based on mode
+  let allExp = [...state.expenses].sort((a,b)=>new Date(b.transactionDate||b.date)-new Date(a.transactionDate||a.date));
+  let filtered = allExp;
+  if(mode === "all") {
+    filtered = allExp;
+  } else if(mode === "range") {
+    filtered = allExp.filter(e => {
+      const d = (e.transactionDate||e.date||"").slice(0,7);
+      return (!state.historyFrom || d >= state.historyFrom) && (!state.historyTo || d <= state.historyTo);
+    });
+  } else {
+    filtered = allExp.filter(e => (e.transactionDate||e.date||"").slice(0,7) === mode);
+  }
+
+  // Category filter
+  const cats = ["All", ...new Set(filtered.map(e=>e.category).filter(Boolean))];
+  window._historyCats = cats;
+  if(state.filterCat && state.filterCat !== "All") {
+    filtered = filtered.filter(e => e.category === state.filterCat);
+  }
+
+  const total = filtered.reduce((s,e)=>s+parseFloat(e.amount||0),0);
+
+  // Get all available months for picker
+  const months = [...new Set(allExp.map(e=>(e.transactionDate||e.date||"").slice(0,7)).filter(Boolean))].sort((a,b)=>b.localeCompare(a));
+  const currentMonth = new Date().toISOString().slice(0,7);
 
   let html = `<div style="padding:0 20px">
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;padding-top:4px">
+    <!-- Header -->
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-top:4px">
       <button onclick="setView('dashboard')" style="background:none;border:1px solid var(--border);border-radius:8px;padding:5px 12px;color:var(--muted);cursor:pointer;font-size:13px">← Back</button>
-      <div style="font-size:13px;color:var(--muted);font-family:'DM Mono',monospace">${expenses.length} expenses · ${fmt(expenses.reduce((s,e)=>s+parseFloat(e.amount||0),0))}</div>
+      <div style="font-size:13px;color:var(--muted);font-family:'DM Mono',monospace;flex:1">${filtered.length} expenses · ${fmt(total)}</div>
     </div>
+
+    <!-- Month selector tabs -->
+    <div class="filter-scroll" style="margin-bottom:10px;gap:6px">
+      <button class="filter-chip ${mode===currentMonth?'active':''}" onclick="setHistoryMonth('${currentMonth}')">This Month</button>
+      <button class="filter-chip ${mode==='all'?'active':''}" onclick="setHistoryMonth('all')">All Time</button>
+      <button class="filter-chip ${mode==='range'?'active':''}" onclick="setHistoryMonth('range')">📅 Range</button>
+      ${months.filter(m=>m!==currentMonth).slice(0,6).map(m=>`<button class="filter-chip ${mode===m?'active':''}" onclick="setHistoryMonth('${m}')">${fmtMonth(m)}</button>`).join("")}
+    </div>
+
+    <!-- Range picker (shown only in range mode) -->
+    ${mode==='range'?`<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+      <input type="month" value="${state.historyFrom}" onchange="state.historyFrom=this.value;renderView()" style="flex:1;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:'DM Mono',monospace;font-size:12px;outline:none" />
+      <span style="color:var(--muted);font-size:12px">→</span>
+      <input type="month" value="${state.historyTo}" onchange="state.historyTo=this.value;renderView()" style="flex:1;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-family:'DM Mono',monospace;font-size:12px;outline:none" />
+    </div>`:''}
+
+    <!-- Category filter -->
     <div class="filter-scroll" style="margin-bottom:12px">
       ${cats.map((c,i)=>`<button class="filter-chip ${(state.filterCat||'All')===c?'active':''}" onclick="histFilter(${i})">${c}</button>`).join("")}
     </div>`;
 
-  if(expenses.length === 0) {
+  if(filtered.length === 0) {
     html += `<div class="empty">No expenses found.</div>`;
   } else {
-    expenses.forEach(e => { html += expCard(e); });
+    filtered.forEach(e => { html += expCard(e); });
   }
   html += `</div>`;
-
-  // Store cats list for histFilter to reference
-  window._historyCats = cats;
   return html;
+}
+
+function setHistoryMonth(m) {
+  state.historyMonth = m;
+  state.filterCat = "All";
+  renderView();
 }
 
 function histFilter(i) {
@@ -2983,16 +3061,52 @@ function confirmBrokerImport() {
 
 
 function saveNewAccount(){
-  const name=document.getElementById("accName").value.trim();
-  if(!name)return;
-  const bal=parseFloat(document.getElementById("accBal").value)||0;
-  const goal=parseFloat(document.getElementById("accGoal").value)||0;
-  const bank=document.getElementById("accBank").value.trim();
-  const acc={id:Date.now(),name,bank,balance:bal,goal,transactions:[]};
-  if(bal>0) acc.transactions.push({id:Date.now()+1,type:"deposit",amount:bal,note:"Opening balance",date:todayStr()});
-  state.savingsAccounts.push(acc);
-  saveSavingsLocal();closeModal("new-account");renderHeader();renderView();showToast(`"${name}" created!`,"#3fb950");
+  const editId = document.getElementById("accEditId").value;
+  const name = document.getElementById("accName").value.trim();
+  if(!name) return;
+  const bal  = parseFloat(document.getElementById("accBal").value)||0;
+  const goal = parseFloat(document.getElementById("accGoal").value)||0;
+  const bank = document.getElementById("accBank").value.trim();
+
+  if(editId) {
+    // Edit existing
+    const acc = state.savingsAccounts.find(a=>String(a.id)===editId);
+    if(acc) { acc.name=name; acc.bank=bank; acc.goal=goal; acc.balance=bal; }
+  } else {
+    // New account
+    const acc={id:Date.now(),name,bank,balance:bal,goal,transactions:[]};
+    if(bal>0) acc.transactions.push({id:Date.now()+1,type:"deposit",amount:bal,note:"Opening balance",date:todayStr()});
+    state.savingsAccounts.push(acc);
+  }
+  saveSavingsLocal();
+  closeModal("new-account");
+  renderHeader(); renderView();
+  showToast(editId?`"${name}" updated!`:`"${name}" created!`,"#3fb950");
   savingsSheetSave().catch(()=>{});
+}
+
+function openNewSavingsAccount() {
+  document.getElementById("accModalTitle").textContent = "New Savings Account";
+  document.getElementById("accEditId").value = "";
+  document.getElementById("accName").value = "";
+  document.getElementById("accBank").value = "";
+  document.getElementById("accBal").value  = "";
+  document.getElementById("accGoal").value = "";
+  document.getElementById("accSaveBtn").textContent = "Create";
+  openModal("new-account");
+}
+
+function openEditAccount(id) {
+  const acc = state.savingsAccounts.find(a=>a.id===id);
+  if(!acc) return;
+  document.getElementById("accModalTitle").textContent = "Edit Account";
+  document.getElementById("accEditId").value = String(acc.id);
+  document.getElementById("accName").value   = acc.name||"";
+  document.getElementById("accBank").value   = acc.bank||"";
+  document.getElementById("accBal").value    = acc.balance||"";
+  document.getElementById("accGoal").value   = acc.goal||"";
+  document.getElementById("accSaveBtn").textContent = "Save Changes";
+  openModal("new-account");
 }
 
 function openSavingsTxn(accId,type){
@@ -3996,6 +4110,7 @@ function saveRecurring() {
   };
   state.recurring=[...state.recurring,rec];
   try{localStorage.setItem("bt_recurring",JSON.stringify(state.recurring));}catch{}
+  savePreferencesLocal();
   closeModal("recurring-add");
   renderView();
   showToast(`✓ "${name}" recurring added!`,"#3fb950");
@@ -4004,6 +4119,7 @@ function saveRecurring() {
 function deleteRecurring(id) {
   state.recurring=state.recurring.filter(r=>r.id!==id);
   try{localStorage.setItem("bt_recurring",JSON.stringify(state.recurring));}catch{}
+  savePreferencesLocal();
   renderView();
   showToast("Recurring removed","#f85149");
 }
