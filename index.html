@@ -1774,8 +1774,9 @@ function renderDashboard() {
 
 function expCard(e) {
   const cleanDate = (e.transactionDate||e.date||"").slice(0,10);
-  const meta=[cleanDate?"📅 "+cleanDate:"",e.placeName?"📍 "+e.placeName:"",e.creditCard?"💳 "+e.creditCard:"",e.userName?"👤 "+e.userName:""].filter(Boolean).join(" · ");
-  return `<div class="exp-card"><div class="exp-emoji">${catEmoji(e.category)}</div><div class="exp-info"><div class="exp-name">${e.note||e.category||"Expense"}</div><div class="exp-meta">${meta}</div></div><div style="text-align:right"><div class="exp-amount">${fmt(e.amount)}</div><div class="exp-delete" onclick="deleteExp(${e.id})">delete</div></div></div>`;
+  const title = e.placeName || e.note || e.category || "Expense";
+  const meta = [cleanDate, e.userName?"👤 "+e.userName:"", e.creditCard?"💳 "+e.creditCard:""].filter(Boolean).join(" · ");
+  return `<div class="exp-card"><div class="exp-emoji">${catEmoji(e.category)}</div><div class="exp-info"><div class="exp-name">${title}</div><div class="exp-meta">${meta}</div></div><div style="text-align:right"><div class="exp-amount">${fmt(e.amount)}</div><div class="exp-delete" onclick="deleteExp(${e.id})">delete</div></div></div>`;
 }
 
 // ---- SAVINGS ----
