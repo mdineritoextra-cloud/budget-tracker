@@ -1759,6 +1759,42 @@ function renderDashboard() {
     });
   }
 
+  // ── SPENDING PER USER ────────────────────────────────────
+  if(monthExpenses.length > 0) {
+    const byUser = {};
+    monthExpenses.forEach(e => {
+      const u = e.userName || "Unknown";
+      byUser[u] = (byUser[u]||0) + parseFloat(e.amount||0);
+    });
+    const users = Object.entries(byUser).sort((a,b) => b[1]-a[1]);
+    const totalSpentUsers = users.reduce((s,[,v])=>s+v, 0);
+    html += `<div class="section-label" style="margin-top:20px">Spending by User</div>
+    <div class="card" style="padding:14px 16px">
+      ${users.map(([name, amt]) => {
+        const pct = totalSpentUsers > 0 ? (amt/totalSpentUsers*100) : 0;
+        return `<div style="margin-bottom:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+            <div style="display:flex;align-items:center;gap:7px">
+              <span style="font-size:16px">👤</span>
+              <span style="font-size:13px;font-weight:600">${name}</span>
+            </div>
+            <div style="text-align:right">
+              <span style="font-family:'DM Serif Display',serif;font-size:15px;color:var(--red)">${fmt(amt)}</span>
+              <span style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-left:6px">${pct.toFixed(0)}%</span>
+            </div>
+          </div>
+          <div class="cat-bar-track" style="height:5px">
+            <div class="cat-bar-fill" style="width:${pct}%;background:var(--blue)"></div>
+          </div>
+        </div>`;
+      }).join("")}
+      <div style="display:flex;justify-content:space-between;border-top:1px solid var(--border);padding-top:10px;margin-top:2px">
+        <span style="font-size:12px;color:var(--muted);font-family:'DM Mono',monospace">TOTAL</span>
+        <span style="font-family:'DM Serif Display',serif;font-size:15px">${fmt(totalSpentUsers)}</span>
+      </div>
+    </div>`;
+  }
+
   if(monthExpenses.length>0){
     html+=`<div class="section-label" style="margin-top:20px">Recent</div>`;
     monthExpenses.slice(0,5).forEach(e=>{html+=expCard(e);});
