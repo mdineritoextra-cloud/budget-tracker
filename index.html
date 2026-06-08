@@ -904,6 +904,7 @@ let state = {
   trades:[], tradeType:"buy", rothTab:"dashboard", updatingTicker:null,
   // Brokerage
   brokerageAccounts:[], brokerageTab:"accounts", brokerTxnType:"buy",
+  livePrices: {}, livePricesUpdatedAt: "",
   filterBrokerAcc:null, updatingBrokerPos:null,
   // 401k
   retirement:{
@@ -1167,6 +1168,48 @@ function saveBudgetHistoryLocal() {
   try{ localStorage.setItem("bt_budget_history", JSON.stringify(state.budgetHistory)); }catch{}
   budgetHistoryPush().catch(()=>{});
 }
+// ---- LIVE PRICES ----
+async function fetchLivePrices() {
+  const btn = document.getElementById("livePriceBtn");
+  if(btn) { btn.textContent = "⏳ Fetching..."; btn.disabled = true; }
+
+  // Collect all unique tickers from positions
+  const tickers = [...new Set(
+    state.brokerageAccounts.flatMap(a => (a.positions||[]).filter(p=>p.shares>0).map(p=>p.ticker))
+  )].filter(Boolean);
+
+  if(!tickers.length) { showToast("No positions to update","#e3b341"); if(btn){btn.textContent="⟳ Live Prices";btn.disabled=false;} return; }
+
+  try {
+    const res = await fetch(SCRIPT_URL, {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ action: "getLivePrices", tickers })
+    });
+    const data = await res.json();
+    if(data.prices) {
+      state.livePrices = data.prices;
+      const now = new Date();
+      state.livePricesUpdatedAt = now.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"});
+
+      // Update currentPrice in positions
+      let updated = 0;
+      state.brokerageAccounts.forEach(a => {
+        (a.positions||[]).forEach(p => {
+          const lp = data.prices[p.ticker];
+          if(lp && lp.price > 0) { p.currentPrice = lp.price; updated++; }
+        });
+      });
+
+      if(updated > 0) saveBrokerageLocal();
+      showToast(`✓ Updated ${updated} position${updated!==1?'s':''} · ${state.livePricesUpdatedAt}`, "#3fb950");
+    }
+  } catch(e) {
+    showToast("Price fetch failed: " + e.message, "#f85149");
+  }
+  renderView();
+}
+
 function saveBrokerageLocal() {
   try{ localStorage.setItem("bt_brokerage", JSON.stringify(state.brokerageAccounts)); }catch{}
   post("saveBrokerage", { data: state.brokerageAccounts }).catch(()=>{});
@@ -2401,7 +2444,9 @@ function renderBrokerage() {
 
     html+=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
       <div class="section-label" style="margin-bottom:0">${filterAcc?state.brokerageAccounts.find(a=>a.id===filterAcc)?.name||'Positions':'All Positions'}</div>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;align-items:center">
+        ${state.livePricesUpdatedAt?`<span style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace">${state.livePricesUpdatedAt}</span>`:''}
+        <button class="section-action" style="color:var(--blue);border:1px solid rgba(88,166,255,0.3);padding:4px 10px;border-radius:8px" onclick="fetchLivePrices()" id="livePriceBtn">⟳ Live Prices</button>
         ${filterAcc?`<button class="section-action" onclick="state.filterBrokerAcc=null;renderView()">All</button>`:''}
         <button class="section-action" onclick="openBrokerTxn(${filterAcc||''})">+ Log</button>
       </div>
@@ -2415,13 +2460,19 @@ function renderBrokerage() {
         const cost=p.shares*p.avgCost;
         const gain=val-cost;
         const gainPct=cost>0?(gain/cost*100):0;
+        const lp = state.livePrices && state.livePrices[p.ticker];
+        const dayChange = lp ? lp.change : null;
+        const dayChangePct = lp ? lp.changePct : null;
+        const isLive = !!lp;
         html+=`<div class="position-row">
           <div style="flex:1">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">
               <div class="pos-ticker">${p.ticker}</div>
               <div class="pos-name" style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name}</div>
+              ${isLive?`<span style="font-size:9px;padding:2px 5px;border-radius:4px;background:rgba(63,185,80,0.15);color:var(--green);font-family:'DM Mono',monospace">LIVE</span>`:''}
             </div>
-            <div class="pos-shares">${p.shares.toFixed(4)} shares · avg ${fmt(p.avgCost)} · <span style="color:var(--blue);cursor:pointer" onclick="openBrokerPriceUpdate(${p.id},${p.accId},'${p.ticker}',${p.currentPrice})">update price</span></div>
+            <div class="pos-shares">${p.shares.toFixed(4)} shares · avg ${fmt(p.avgCost)}</div>
+            ${isLive?`<div style="font-size:11px;font-family:'DM Mono',monospace;margin-top:2px;color:${dayChange>=0?'var(--green)':'var(--red)'}">Today: ${dayChange>=0?'+':''}${fmt(dayChange)} (${dayChangePct>=0?'+':''}${dayChangePct?.toFixed(2)}%)</div>`:'<div style="font-size:11px;color:var(--muted);font-family:\'DM Mono\',monospace;margin-top:2px;cursor:pointer" onclick="openBrokerPriceUpdate('+p.id+','+p.accId+',\''+p.ticker+'\','+p.currentPrice+')">update price manually</div>'}
             ${!filterAcc?`<div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:2px">${p.accName}</div>`:''}
           </div>
           <div class="holding-val">
