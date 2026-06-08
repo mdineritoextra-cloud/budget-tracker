@@ -1071,6 +1071,15 @@ async function syncFromSheets() {
           }
         } catch{}
       }
+      if (p.cardSettings !== undefined && p.cardSettings) {
+        try {
+          const parsed = JSON.parse(p.cardSettings);
+          if (parsed && typeof parsed === "object") {
+            state.cardSettings = parsed;
+            try{ localStorage.setItem("bt_card_settings", JSON.stringify(state.cardSettings)); }catch{}
+          }
+        } catch{}
+      }
     } else {
       // Preferences not in getAll — try fetching them separately
       try {
@@ -1149,6 +1158,7 @@ function savePreferencesLocal() {
     users:           JSON.stringify(state.users),
     categories:      JSON.stringify(state.categories),
     categoryBudgets: JSON.stringify(state.categoryBudgets),
+    cardSettings:    JSON.stringify(state.cardSettings),
   };
   try{ localStorage.setItem("bt_income",          String(state.income)); }catch{}
   try{ localStorage.setItem("bt_theme",           state.theme); }catch{}
@@ -1156,6 +1166,7 @@ function savePreferencesLocal() {
   try{ localStorage.setItem("bt_users",           JSON.stringify(state.users)); }catch{}
   try{ localStorage.setItem("bt_categories",      JSON.stringify(state.categories)); }catch{}
   try{ localStorage.setItem("bt_cat_budgets",     JSON.stringify(state.categoryBudgets)); }catch{}
+  try{ localStorage.setItem("bt_card_settings",   JSON.stringify(state.cardSettings)); }catch{}
   post("savePreferences", { data: prefs }).catch(()=>{});
 }
 
@@ -3106,6 +3117,8 @@ function rolloverCCBalances(fromMonth, toMonth) {
 
 function saveCardSettingsLocal() {
   try { localStorage.setItem("bt_card_settings", JSON.stringify(state.cardSettings)); } catch {}
+  // Sync to Sheets via preferences
+  savePreferencesLocal();
 }
 
 function openCCSettings() {
