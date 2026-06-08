@@ -426,6 +426,7 @@
     <div class="modal-title">Category Budgets</div>
     <p style="font-size:12px;color:var(--muted);margin-bottom:16px;font-family:'DM Mono',monospace">Set a monthly spending limit per category. The dashboard will show your progress and alert when you're close or over.</p>
     <div id="catBudgetList"></div>
+    <button onclick="closeModal('cat-budgets');openModal('category')" style="width:100%;padding:11px;border-radius:10px;border:1px dashed var(--border);background:transparent;color:var(--blue);font-size:13px;font-family:'DM Sans',sans-serif;cursor:pointer;margin-bottom:14px">+ Add New Category</button>
     <div class="modal-actions">
       <button class="btn-cancel" onclick="closeModal('cat-budgets')">Close</button>
     </div>
@@ -1052,6 +1053,24 @@ async function syncFromSheets() {
           }
         } catch{}
       }
+      if (p.categories !== undefined && p.categories) {
+        try {
+          const parsed = JSON.parse(p.categories);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            state.categories = parsed;
+            try{ localStorage.setItem("bt_categories", JSON.stringify(state.categories)); }catch{}
+          }
+        } catch{}
+      }
+      if (p.categoryBudgets !== undefined && p.categoryBudgets) {
+        try {
+          const parsed = JSON.parse(p.categoryBudgets);
+          if (parsed && typeof parsed === "object") {
+            state.categoryBudgets = parsed;
+            try{ localStorage.setItem("bt_cat_budgets", JSON.stringify(state.categoryBudgets)); }catch{}
+          }
+        } catch{}
+      }
     } else {
       // Preferences not in getAll — try fetching them separately
       try {
@@ -1123,16 +1142,20 @@ function saveDebtsLocal() {
 }
 function savePreferencesLocal() {
   const prefs = {
-    income:   state.income,
-    theme:    state.theme,
-    currency: state.currency,
-    userName: state.userName,
-    users:    JSON.stringify(state.users),
+    income:          state.income,
+    theme:           state.theme,
+    currency:        state.currency,
+    userName:        state.userName,
+    users:           JSON.stringify(state.users),
+    categories:      JSON.stringify(state.categories),
+    categoryBudgets: JSON.stringify(state.categoryBudgets),
   };
-  try{ localStorage.setItem("bt_income",   String(state.income)); }catch{}
-  try{ localStorage.setItem("bt_theme",    state.theme); }catch{}
-  try{ localStorage.setItem("bt_currency", state.currency); }catch{}
-  try{ localStorage.setItem("bt_users",    JSON.stringify(state.users)); }catch{}
+  try{ localStorage.setItem("bt_income",          String(state.income)); }catch{}
+  try{ localStorage.setItem("bt_theme",           state.theme); }catch{}
+  try{ localStorage.setItem("bt_currency",        state.currency); }catch{}
+  try{ localStorage.setItem("bt_users",           JSON.stringify(state.users)); }catch{}
+  try{ localStorage.setItem("bt_categories",      JSON.stringify(state.categories)); }catch{}
+  try{ localStorage.setItem("bt_cat_budgets",     JSON.stringify(state.categoryBudgets)); }catch{}
   post("savePreferences", { data: prefs }).catch(()=>{});
 }
 
@@ -1667,7 +1690,11 @@ function renderDashboard() {
       ${isCurrentMonth?'<button class="section-action" onclick="openCatBudgets()">✏️ Edit</button>':'<span style="font-size:10px;color:var(--yellow);font-family:DM Mono,monospace">past month</span>'}
     </div>`;
 
-    state.categories.filter(c=>getLimit(c.name)>0).forEach(c=>{
+    // Show categories with a limit first, then those with spending but no limit
+    const catsWithLimit = state.categories.filter(c=>getLimit(c.name)>0);
+    const catsNoLimit   = state.categories.filter(c=>!getLimit(c.name)&&getSpent(c.name)>0);
+
+    catsWithLimit.forEach(c=>{
       const limit=getLimit(c.name);
       const spent=getSpent(c.name);
       const pct=Math.min(spent/limit*100,100);
@@ -1694,6 +1721,26 @@ function renderDashboard() {
         </div>
       </div>`;
     });
+
+    // Also show categories with spending but no limit set
+    if(catsNoLimit.length > 0) {
+      catsNoLimit.forEach(c=>{
+        const spent = getSpent(c.name);
+        html+=`<div style="margin-bottom:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+            <div style="display:flex;align-items:center;gap:6px;font-size:13px">
+              <div class="cat-dot" style="background:${c.color}"></div>${c.name}
+              <span style="font-size:9px;color:var(--muted);font-family:'DM Mono',monospace;padding:2px 6px;border:1px solid var(--border);border-radius:4px">no limit</span>
+            </div>
+            <div style="font-family:'DM Mono',monospace;font-size:11px;color:var(--muted)">${fmt(spent)} spent</div>
+          </div>
+          <div class="cat-bar-track" style="height:6px">
+            <div class="cat-bar-fill" style="width:100%;background:${c.color};opacity:0.3"></div>
+          </div>
+        </div>`;
+      });
+    }
+
     html+=`<div class="divider"></div>`;
   } else {
     // Prompt to set budgets if none set
@@ -1726,7 +1773,8 @@ function renderDashboard() {
 }
 
 function expCard(e) {
-  const meta=[e.transactionDate?"📅 "+e.transactionDate:"",e.placeName?"📍 "+e.placeName:"",e.creditCard?"💳 "+e.creditCard:"",e.userName?"👤 "+e.userName:""].filter(Boolean).join(" · ");
+  const cleanDate = (e.transactionDate||e.date||"").slice(0,10);
+  const meta=[cleanDate?"📅 "+cleanDate:"",e.placeName?"📍 "+e.placeName:"",e.creditCard?"💳 "+e.creditCard:"",e.userName?"👤 "+e.userName:""].filter(Boolean).join(" · ");
   return `<div class="exp-card"><div class="exp-emoji">${catEmoji(e.category)}</div><div class="exp-info"><div class="exp-name">${e.note||e.category||"Expense"}</div><div class="exp-meta">${meta}</div></div><div style="text-align:right"><div class="exp-amount">${fmt(e.amount)}</div><div class="exp-delete" onclick="deleteExp(${e.id})">delete</div></div></div>`;
 }
 
@@ -2058,6 +2106,47 @@ function renderAdd() {
     <div class="field"><label class="field-label">Note (optional)</label><input type="text" placeholder="What did you buy?" id="fNote" value="${f.note||''}" oninput="updateForm('note',this.value)" /></div>
     <button class="submit-btn ${f.amount&&parseFloat(f.amount)>0?'ready':'disabled'}" onclick="submitAdd()">Add & Save to Sheets</button>
   </div>`;
+}
+
+function setFilter(cat){state.filterCat=cat;renderView();}
+
+// ---- HISTORY ----
+function renderHistory() {
+  const vm = state.viewMonth || new Date().toISOString().slice(0,7);
+  let allMonthExp = state.expenses.filter(e => (e.transactionDate||e.date||"").slice(0,7) === vm);
+  const cats = ["All", ...new Set(allMonthExp.map(e=>e.category).filter(Boolean))];
+
+  let expenses = state.filterCat && state.filterCat !== "All"
+    ? allMonthExp.filter(e => e.category === state.filterCat)
+    : allMonthExp;
+
+  expenses = [...expenses].sort((a,b) => new Date(b.transactionDate||b.date) - new Date(a.transactionDate||a.date));
+
+  let html = `<div style="padding:0 20px">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;padding-top:4px">
+      <button onclick="setView('dashboard')" style="background:none;border:1px solid var(--border);border-radius:8px;padding:5px 12px;color:var(--muted);cursor:pointer;font-size:13px">← Back</button>
+      <div style="font-size:13px;color:var(--muted);font-family:'DM Mono',monospace">${expenses.length} expenses · ${fmt(expenses.reduce((s,e)=>s+parseFloat(e.amount||0),0))}</div>
+    </div>
+    <div class="filter-scroll" style="margin-bottom:12px">
+      ${cats.map((c,i)=>`<button class="filter-chip ${(state.filterCat||'All')===c?'active':''}" onclick="histFilter(${i})">${c}</button>`).join("")}
+    </div>`;
+
+  if(expenses.length === 0) {
+    html += `<div class="empty">No expenses found.</div>`;
+  } else {
+    expenses.forEach(e => { html += expCard(e); });
+  }
+  html += `</div>`;
+
+  // Store cats list for histFilter to reference
+  window._historyCats = cats;
+  return html;
+}
+
+function histFilter(i) {
+  const cats = window._historyCats || ["All"];
+  state.filterCat = cats[i] || "All";
+  renderView();
 }
 
 // ---- BROKERAGE ----
@@ -3195,6 +3284,7 @@ function setCatBudget(catName, value) {
   if(v > 0) { state.categoryBudgets[catName] = v; }
   else       { delete state.categoryBudgets[catName]; }
   saveBudgetsLocal();
+  savePreferencesLocal();
   renderHeader();
   setTimeout(()=>renderCatBudgetList(), 300);
 }
@@ -3202,6 +3292,7 @@ function setCatBudget(catName, value) {
 function clearCatBudget(catName) {
   delete state.categoryBudgets[catName];
   saveBudgetsLocal();
+  savePreferencesLocal();
   renderHeader(); renderCatBudgetList();
 }
 
@@ -3839,7 +3930,7 @@ function saveName() {
   showToast("User set to " + (state.userName||"none") + "!");
   savePreferencesLocal();
 }
-function saveCategory(){const name=document.getElementById("catName").value.trim();if(!name)return;const fullName=document.getElementById("catEmoji").value+" "+name;state.categories=[...state.categories,{name:fullName,color:state.selectedCatColor}];try{localStorage.setItem("bt_categories",JSON.stringify(state.categories));}catch{}closeModal("category");renderView();showToast(`"${fullName}" added!`);}
+function saveCategory(){const name=document.getElementById("catName").value.trim();if(!name)return;const fullName=document.getElementById("catEmoji").value+" "+name;state.categories=[...state.categories,{name:fullName,color:state.selectedCatColor}];try{localStorage.setItem("bt_categories",JSON.stringify(state.categories));}catch{}closeModal("category");renderView();showToast(`"${fullName}" added!`);savePreferencesLocal();}
 
 function buildColorSwatches(){
   document.getElementById("colorSwatches").innerHTML=CAT_COLORS.map(c=>`<div class="swatch ${c===state.selectedCatColor?'selected':''}" style="background:${c}" onclick="selectColor('${c}')"></div>`).join("");
