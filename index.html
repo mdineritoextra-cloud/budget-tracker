@@ -3537,13 +3537,17 @@ function renderCatBudgetList() {
     const near = current>0&&!over&&pct>=80;
     return `<div style="margin-bottom:16px;padding-bottom:16px;border-bottom:1px solid var(--border)">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-        <div style="display:flex;align-items:center;gap:8px">
+        <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
           <div style="width:8px;height:8px;border-radius:50%;background:${c.color};flex-shrink:0"></div>
           <span style="font-size:14px;font-weight:600">${c.name}</span>
           ${over?`<span style="font-size:9px;background:rgba(248,81,73,0.15);color:var(--red);padding:2px 6px;border-radius:4px;font-family:'DM Mono',monospace">OVER</span>`:''}
           ${near?`<span style="font-size:9px;background:rgba(227,179,65,0.15);color:var(--yellow);padding:2px 6px;border-radius:4px;font-family:'DM Mono',monospace">NEAR</span>`:''}
         </div>
-        <span style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace">${fmt(spent)} spent</span>
+        <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+          <span style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace">${fmt(spent)} spent</span>
+          <button onclick="renameCategoryPrompt(${state.categories.indexOf(c)})" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 7px;cursor:pointer;font-size:11px;color:var(--muted)">✏️</button>
+          <button onclick="deleteCategory(${state.categories.indexOf(c)})" style="background:none;border:1px solid var(--border);border-radius:6px;padding:3px 7px;cursor:pointer;font-size:11px;color:var(--muted)">🗑</button>
+        </div>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
         <span style="font-size:13px;color:var(--muted)">$</span>
@@ -3564,6 +3568,40 @@ function renderCatBudgetList() {
       </div>`:''}
     </div>`;
   }).join("");
+}
+
+function renameCategoryPrompt(idx) {
+  const cat = state.categories[idx];
+  if(!cat) return;
+  const newName = prompt(`Rename "${cat.name}" to:`, cat.name);
+  if(!newName || !newName.trim() || newName.trim() === cat.name) return;
+  const oldName = cat.name;
+  const trimmed = newName.trim();
+  // Update all expenses using this category
+  state.expenses = state.expenses.map(e => e.category===oldName ? {...e, category:trimmed} : e);
+  // Update budget key
+  if(state.categoryBudgets[oldName] !== undefined) {
+    state.categoryBudgets[trimmed] = state.categoryBudgets[oldName];
+    delete state.categoryBudgets[oldName];
+  }
+  state.categories[idx] = {...cat, name:trimmed};
+  saveLocal();
+  try{localStorage.setItem("bt_categories", JSON.stringify(state.categories));}catch{}
+  savePreferencesLocal();
+  renderCatBudgetList();
+  showToast(`Renamed to "${trimmed}"`, "#3fb950");
+}
+
+function deleteCategory(idx) {
+  const cat = state.categories[idx];
+  if(!cat) return;
+  if(!confirm(`Delete "${cat.name}"? Expenses using it keep the name.`)) return;
+  delete state.categoryBudgets[cat.name];
+  state.categories.splice(idx, 1);
+  try{localStorage.setItem("bt_categories", JSON.stringify(state.categories));}catch{}
+  savePreferencesLocal();
+  renderCatBudgetList();
+  showToast(`"${cat.name}" deleted`, "#f85149");
 }
 
 function setCatBudget(catName, value) {
