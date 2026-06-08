@@ -411,9 +411,16 @@
 <div class="modal-overlay" id="modal-cc-settings" style="display:none">
   <div class="modal-box" style="max-height:88vh;overflow-y:auto">
     <div class="modal-title">Credit Card Tracker</div>
-    <p style="font-size:12px;color:var(--muted);margin-bottom:16px;font-family:'DM Mono',monospace">Track balances, close dates, and unpaid amounts per card. Unpaid balances carry over to the next month automatically.</p>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:16px;font-family:'DM Mono',monospace">Track balances, close dates, and unpaid amounts per card.</p>
     <div id="ccSettingsList"></div>
-    <div class="modal-actions" style="margin-top:8px">
+    <div style="border-top:1px solid var(--border);margin:16px 0 12px"></div>
+    <div style="font-size:10px;letter-spacing:2px;text-transform:uppercase;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:10px">Manage Cards</div>
+    <div id="ccCardList" style="margin-bottom:12px"></div>
+    <div style="display:flex;gap:8px;margin-bottom:4px">
+      <input type="text" id="newCardName" placeholder="Card name (e.g. Citi Double Cash)" class="modal-input" style="margin-bottom:0;flex:1" />
+      <button onclick="addCreditCard()" style="padding:10px 14px;border-radius:10px;border:none;background:var(--blue);color:#fff;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;white-space:nowrap;flex-shrink:0">+ Add</button>
+    </div>
+    <div class="modal-actions" style="margin-top:14px">
       <button class="btn-cancel" onclick="closeModal('cc-settings')">Close</button>
       <button class="btn-save" onclick="saveAllCardSettings()">Save All</button>
     </div>
@@ -868,21 +875,22 @@ const DEFAULT_CATS = [
   {name:"☕ Coffee",color:"#F4A460"},{name:"✈️ Travel",color:"#FF7F7F"},
 ];
 const CAT_COLORS = ["#FF6B6B","#4ECDC4","#45B7D1","#96CEB4","#FFEAA7","#DDA0DD","#98D8C8","#B0C4DE","#F4A460","#FF7F7F","#87CEEB","#90EE90","#FFB347","#DEB887","#20B2AA"];
-const CREDIT_CARDS = [
+const DEFAULT_CREDIT_CARDS = [
   {name:"Amex Gold",icon:"💳",color:"#C9A84C"},{name:"Amex Platinum",icon:"⬛",color:"#A8A9AD"},
   {name:"Chase Prime",icon:"🔵",color:"#1A6DB5"},{name:"Bilt Rewards",icon:"🏠",color:"#6C63FF"},
   {name:"Apple Card",icon:"🍎",color:"#888888"},{name:"Chase Checking",icon:"✔️",color:"#1A6DB5"},
   {name:"Debit Card",icon:"💵",color:"#3fb950"},{name:"Cash",icon:"💰",color:"#e3b341"},
   {name:"Other",icon:"💳",color:"#7d8590"},
 ];
+// Use state.creditCards at runtime — fallback to DEFAULT_CREDIT_CARDS
+function CREDIT_CARDS() { return state ? (state.creditCards||DEFAULT_CREDIT_CARDS) : DEFAULT_CREDIT_CARDS; }
 
 let state = {
   // Budget
   expenses:[], income:3000, userName:"", users:[], categories:[...DEFAULT_CATS],
-  categoryBudgets:{}, // { "🍔 Food": 500, ... } — the limits, never reset
-  budgetHistory:{},   // { "2025-06": { "🍔 Food": { limit:500, spent:320 } } }
-  // Credit card balances & settings
-  cardSettings:{},    // { "Amex Gold": { closeDay:25, dueDay:22, balance:0, unpaid:false, carryHistory:[] } }
+  categoryBudgets:{}, budgetHistory:{},
+  creditCards: [...DEFAULT_CREDIT_CARDS],
+  cardSettings:{},
   viewMonth: new Date().toISOString().slice(0,7), // "YYYY-MM" currently viewing
   view:"summary", filterCat:"All", selectedCatColor:CAT_COLORS[8], selectedCard:"",
   importMode:"paste", importPreview:null, importText:"", addForm:null,
@@ -927,6 +935,7 @@ function init() {
     const sb = localStorage.getItem("bt_cat_budgets"); if(sb) state.categoryBudgets=JSON.parse(sb);
     const sbh = localStorage.getItem("bt_budget_history"); if(sbh) state.budgetHistory=JSON.parse(sbh);
     const scs = localStorage.getItem("bt_card_settings"); if(scs) state.cardSettings=JSON.parse(scs);
+    const scc = localStorage.getItem("bt_credit_cards"); if(scc) state.creditCards=JSON.parse(scc);
     state.viewMonth = new Date().toISOString().slice(0,7);
     const sa = localStorage.getItem("bt_savings"); if(sa) state.savingsAccounts=JSON.parse(sa);
     const st = localStorage.getItem("bt_trades"); if(st) state.trades=JSON.parse(st);
@@ -1080,6 +1089,15 @@ async function syncFromSheets() {
           }
         } catch{}
       }
+      if (p.creditCards !== undefined && p.creditCards) {
+        try {
+          const parsed = JSON.parse(p.creditCards);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            state.creditCards = parsed;
+            try{ localStorage.setItem("bt_credit_cards", JSON.stringify(state.creditCards)); }catch{}
+          }
+        } catch{}
+      }
     } else {
       // Preferences not in getAll — try fetching them separately
       try {
@@ -1159,6 +1177,7 @@ function savePreferencesLocal() {
     categories:      JSON.stringify(state.categories),
     categoryBudgets: JSON.stringify(state.categoryBudgets),
     cardSettings:    JSON.stringify(state.cardSettings),
+    creditCards:     JSON.stringify(state.creditCards),
   };
   try{ localStorage.setItem("bt_income",          String(state.income)); }catch{}
   try{ localStorage.setItem("bt_theme",           state.theme); }catch{}
@@ -1167,6 +1186,7 @@ function savePreferencesLocal() {
   try{ localStorage.setItem("bt_categories",      JSON.stringify(state.categories)); }catch{}
   try{ localStorage.setItem("bt_cat_budgets",     JSON.stringify(state.categoryBudgets)); }catch{}
   try{ localStorage.setItem("bt_card_settings",   JSON.stringify(state.cardSettings)); }catch{}
+  try{ localStorage.setItem("bt_credit_cards",    JSON.stringify(state.creditCards)); }catch{}
   post("savePreferences", { data: prefs }).catch(()=>{});
 }
 
@@ -1383,7 +1403,7 @@ function renderSummary() {
   </div>`;
 
   // ── ALERTS ──────────────────────────────────────────────
-  const unpaidSummary = CREDIT_CARDS.filter(cc=>{ const s=state.cardSettings[cc.name]; return s&&s.unpaid&&s.balance>0; });
+  const unpaidSummary = CREDIT_CARDS().filter(cc=>{ const s=state.cardSettings[cc.name]; return s&&s.unpaid&&s.balance>0; });
   if(unpaidSummary.length>0){
     const totalUnpaid = unpaidSummary.reduce((sum,cc)=>sum+(state.cardSettings[cc.name].balance||0),0);
     html+=`<div onclick="setView('dashboard');setTimeout(openCCSettings,100)" style="background:rgba(248,81,73,0.08);border:1px solid rgba(248,81,73,0.25);border-radius:12px;padding:11px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;margin:0 20px 12px">
@@ -1633,11 +1653,11 @@ function renderDashboard() {
 
   // Credit card unpaid balance alerts
   if(isCurrentMonth) {
-    const unpaidCards = CREDIT_CARDS.filter(cc=>{
+    const unpaidCards = CREDIT_CARDS().filter(cc=>{
       const s = state.cardSettings[cc.name];
       return s && s.unpaid && s.balance>0;
     });
-    const carryoverCards = CREDIT_CARDS.filter(cc=>{
+    const carryoverCards = CREDIT_CARDS().filter(cc=>{
       const s = state.cardSettings[cc.name];
       return s && s.carriedBalance>0;
     });
@@ -2142,7 +2162,7 @@ function renderAdd() {
     const txtCol=active?(over?'var(--red)':near?'var(--yellow)':c.color):'';
     return `<button class="cat-chip ${active?'active':''}" style="${borderCol?`border-color:${borderCol};`:''}${bgCol?`background:${bgCol};`:''}${txtCol?`color:${txtCol};`:''}" onclick="selectCat('${c.name.replace(/'/g,"\\'")}')"><span>${c.name}</span>${badge}</button>`;
   }).join("");
-  const ccGrid = CREDIT_CARDS.map(cc=>{
+  const ccGrid = CREDIT_CARDS().map(cc=>{
     const active=((state.addForm&&state.addForm.creditCard)||state.selectedCard)===cc.name;
     return `<button class="cc-chip ${active?'active':''}" style="${active?`border-color:${cc.color};background:${cc.color}18;color:${cc.color}`:''}" onclick="selectCard('${cc.name.replace(/'/g,"\\'")}')"><span class="cc-icon">${cc.icon}</span><span class="cc-name">${cc.name}</span></button>`;
   }).join("");
@@ -3076,7 +3096,7 @@ function checkMonthRollover() {
 
 function rolloverCCBalances(fromMonth, toMonth) {
   let changed = false;
-  CREDIT_CARDS.forEach(cc => {
+  CREDIT_CARDS().forEach(cc => {
     const s = state.cardSettings[cc.name];
     if (!s) return;
     // Check if the card's close date fell in fromMonth
@@ -3123,7 +3143,60 @@ function saveCardSettingsLocal() {
 
 function openCCSettings() {
   renderCCSettingsList();
+  renderCCCardList();
   openModal("cc-settings");
+}
+
+function renderCCCardList() {
+  const wrap = document.getElementById("ccCardList");
+  if(!wrap) return;
+  wrap.innerHTML = state.creditCards.map((cc, i) => `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+      <span style="font-size:16px">${cc.icon}</span>
+      <input type="text" value="${cc.name}" onchange="renameCreditCard(${i}, this.value)"
+        style="flex:1;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:13px;outline:none" />
+      ${cc.name!=="Cash"&&cc.name!=="Other"?`<button onclick="deleteCreditCard(${i})" style="padding:7px 10px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;font-size:12px">🗑</button>`:''}
+    </div>`).join("");
+}
+
+function addCreditCard() {
+  const inp = document.getElementById("newCardName");
+  const name = (inp.value||"").trim();
+  if(!name) return;
+  if(state.creditCards.find(c=>c.name===name)) { showToast("Card already exists","#f85149"); return; }
+  state.creditCards.push({name, icon:"💳", color:"#7d8590"});
+  inp.value = "";
+  renderCCCardList();
+  renderCCSettingsList();
+  savePreferencesLocal();
+  showToast(`"${name}" added!`, "#3fb950");
+}
+
+function renameCreditCard(idx, newName) {
+  newName = newName.trim();
+  if(!newName) return;
+  const oldName = state.creditCards[idx].name;
+  // Update card name in expenses
+  state.expenses = state.expenses.map(e => e.creditCard===oldName ? {...e, creditCard:newName} : e);
+  // Update cardSettings key
+  if(state.cardSettings[oldName]) {
+    state.cardSettings[newName] = state.cardSettings[oldName];
+    delete state.cardSettings[oldName];
+  }
+  state.creditCards[idx].name = newName;
+  saveLocal();
+  savePreferencesLocal();
+  showToast(`Renamed to "${newName}"`, "#3fb950");
+}
+
+function deleteCreditCard(idx) {
+  const name = state.creditCards[idx].name;
+  if(!confirm(`Delete "${name}"? Expenses using this card will keep the name.`)) return;
+  state.creditCards.splice(idx, 1);
+  renderCCCardList();
+  renderCCSettingsList();
+  savePreferencesLocal();
+  showToast(`"${name}" removed`, "#f85149");
 }
 
 function renderCCSettingsList() {
@@ -3131,7 +3204,7 @@ function renderCCSettingsList() {
   if (!wrap) return;
   const currentMonth = new Date().toISOString().slice(0,7);
 
-  wrap.innerHTML = CREDIT_CARDS.filter(cc => cc.name !== "Cash" && cc.name !== "Debit Card").map(cc => {
+  wrap.innerHTML = CREDIT_CARDS().filter(cc => cc.name !== "Cash" && cc.name !== "Debit Card").map(cc => {
     const s = state.cardSettings[cc.name] || {};
     // Calculate this card's spending this month from expenses
     const monthSpent = state.expenses.filter(e =>
@@ -3234,7 +3307,7 @@ function clearCCCarryover(cardName) {
 }
 
 function saveAllCardSettings() {
-  CREDIT_CARDS.filter(cc => cc.name !== "Cash" && cc.name !== "Debit Card").forEach(cc => {
+  CREDIT_CARDS().filter(cc => cc.name !== "Cash" && cc.name !== "Debit Card").forEach(cc => {
     const key = cc.name.replace(/\s/g,'_');
     const closeDay = parseInt((document.getElementById("cc-close-"+key)||{value:'0'}).value)||0;
     const dueDay   = parseInt((document.getElementById("cc-due-"+key)||{value:'0'}).value)||0;
@@ -3900,7 +3973,7 @@ function openRecurringAdd() {
   const catSel=document.getElementById("recCategory");
   if(catSel){catSel.innerHTML=state.categories.map(c=>`<option value="${c.name}">${c.name}</option>`).join("");}
   const cardSel=document.getElementById("recCard");
-  if(cardSel){cardSel.innerHTML=CREDIT_CARDS.map(c=>`<option value="${c.name}">${c.icon} ${c.name}</option>`).join("");}
+  if(cardSel){cardSel.innerHTML=CREDIT_CARDS().map(c=>`<option value="${c.name}">${c.icon} ${c.name}</option>`).join("");}
   document.getElementById("recStart").value=todayStr();
   document.getElementById("recName").value="";
   document.getElementById("recAmount").value="";
