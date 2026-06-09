@@ -902,6 +902,7 @@ let state = {
   savingsTab:"accounts",
   // Roth IRA
   trades:[], tradeType:"buy", rothTab:"dashboard", updatingTicker:null,
+  rothLivePrices:{}, rothLivePricesUpdatedAt:"",
   // Brokerage
   brokerageAccounts:[], brokerageTab:"accounts", brokerTxnType:"buy",
   livePrices: {}, livePricesUpdatedAt: "",
@@ -1210,6 +1211,36 @@ async function fetchLivePrices() {
   renderView();
 }
 
+async function fetchRothLivePrices() {
+  const btn = document.getElementById("rothLivePriceBtn");
+  if(btn) { btn.textContent = "⏳ Fetching..."; btn.disabled = true; }
+  const holdings = getHoldings();
+  const tickers = [...new Set(holdings.map(h=>h.ticker))].filter(Boolean);
+  if(!tickers.length) { showToast("No holdings to update","#e3b341"); if(btn){btn.textContent="⟳ Live Prices";btn.disabled=false;} return; }
+  try {
+    const res = await fetch(SCRIPT_URL, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ action:"getLivePrices", tickers })
+    });
+    const data = await res.json();
+    if(data.prices) {
+      state.rothLivePrices = data.prices;
+      state.rothLivePricesUpdatedAt = new Date().toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"});
+      // Update currentPrice in trades
+      let updated = 0;
+      state.trades.forEach(t => {
+        const lp = data.prices[t.ticker];
+        if(lp && lp.price > 0) { t.currentPrice = lp.price; updated++; }
+      });
+      if(updated > 0) saveTradesLocal();
+      showToast(`✓ Updated ${tickers.length} holding${tickers.length!==1?'s':''} · ${state.rothLivePricesUpdatedAt}`, "#3fb950");
+    }
+  } catch(e) {
+    showToast("Price fetch failed: " + e.message, "#f85149");
+  }
+  renderView();
+}
+
 function saveBrokerageLocal() {
   try{ localStorage.setItem("bt_brokerage", JSON.stringify(state.brokerageAccounts)); }catch{}
   post("saveBrokerage", { data: state.brokerageAccounts }).catch(()=>{});
@@ -1334,7 +1365,7 @@ function renderHeader() {
     bSub.textContent="portfolio value";
     pTrack.style.display="block";
     const annualLimit=state.contributionLimits[new Date().getFullYear()]||7000;
-    const contributed=state.trades.filter(t=>t.type==="buy"&&new Date(t.date).getFullYear()===new Date().getFullYear()).reduce((s,t)=>s+(t.shares*t.price),0);
+    const contributed=state.trades.filter(t=>t.type==="buy"&&parseInt((t.date||"").slice(0,4))===new Date().getFullYear()).reduce((s,t)=>s+(t.shares*t.price),0);
     const limitPct=Math.min(contributed/annualLimit*100,100);
     pFill.style.width=limitPct+"%"; pFill.style.background="var(--yellow)";
     bRow.innerHTML=`<span style="font-family:'DM Mono',monospace;color:${gain>=0?'var(--green)':'var(--red)'}">${gain>=0?'▲':'▼'} ${fmt(Math.abs(gain))} (${fmtPct(gainPct)})</span><span style="font-family:'DM Mono',monospace;color:var(--muted)">${fmt(contributed)} / ${fmt(annualLimit)} limit</span>`;
@@ -1432,7 +1463,7 @@ function renderSummary() {
   const totalGain = portfolioVal - totalCost;
   const totalGainPct = totalCost>0 ? (totalGain/totalCost*100) : 0;
   const annualLimit = state.contributionLimits[new Date().getFullYear()]||7000;
-  const contributed = state.trades.filter(t=>t.type==="buy"&&new Date(t.date).getFullYear()===new Date().getFullYear()).reduce((s,t)=>s+(t.shares*t.price),0);
+  const contributed = state.trades.filter(t=>t.type==="buy"&&parseInt((t.date||"").slice(0,4))===new Date().getFullYear()).reduce((s,t)=>s+(t.shares*t.price),0);
   const topHoldings = holdings.sort((a,b)=>b.currentValue-a.currentValue).slice(0,3);
 
   // --- NET WORTH ---
@@ -2026,12 +2057,12 @@ function renderRoth() {
   const totalGainPct = totalCost>0?(totalGain/totalCost*100):0;
   const currentYear = new Date().getFullYear();
   const annualLimit = state.contributionLimits[currentYear]||7000;
-  const contributed = state.trades.filter(t=>t.type==="buy"&&new Date(t.date).getFullYear()===currentYear).reduce((s,t)=>s+(t.shares*t.price),0);
+  const contributed = state.trades.filter(t=>t.type==="buy"&&parseInt((t.date||"").slice(0,4))===currentYear).reduce((s,t)=>s+(t.shares*t.price),0);
 
   // Build per-year contribution data — only 2025 onwards
   const allYears = [...new Set([
     ...Object.keys(state.contributionLimits).map(Number).filter(y=>y>=2025),
-    ...state.trades.map(t=>new Date(t.date).getFullYear()).filter(y=>y>=2025)
+    ...state.trades.map(t=>parseInt((t.date||"").slice(0,4))).filter(y=>y>=2025)
   ])].sort((a,b)=>b-a);
 
   let html = `<div class="tab-bar">
@@ -2094,7 +2125,7 @@ function renderRoth() {
 
     allYears.forEach(yr=>{
       const limit = state.contributionLimits[yr]||7000;
-      const yrContrib = state.trades.filter(t=>t.type==="buy"&&new Date(t.date).getFullYear()===yr).reduce((s,t)=>s+(t.shares*t.price),0);
+      const yrContrib = state.trades.filter(t=>t.type==="buy"&&parseInt((t.date||"").slice(0,4))===yr).reduce((s,t)=>s+(t.shares*t.price),0);
       const yrPct = Math.min(yrContrib/limit*100,100);
       const isCurrentYear = yr===currentYear;
       const maxed = yrContrib>=limit;
@@ -2141,24 +2172,35 @@ function renderRoth() {
 
   } else if(tab==='holdings'){
     html+=`<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-      <div class="section-label" style="margin-bottom:0">Holdings</div>
-      <button class="section-action" onclick="openModal('trade')">+ Log Trade</button>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="section-label" style="margin-bottom:0">Holdings</div>
+        ${state.rothLivePricesUpdatedAt?`<span style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace">${state.rothLivePricesUpdatedAt}</span>`:''}
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="section-action" style="color:var(--yellow);border:1px solid rgba(227,179,65,0.3);padding:4px 10px;border-radius:8px" onclick="fetchRothLivePrices()" id="rothLivePriceBtn">⟳ Live Prices</button>
+        <button class="section-action" onclick="openModal('trade')">+ Log Trade</button>
+      </div>
     </div>`;
     if(holdings.length===0){
       html+=`<div class="empty">No holdings yet.<br>Log a buy trade to get started.</div>`;
     } else {
       holdings.sort((a,b)=>b.currentValue-a.currentValue).forEach(h=>{
+        const lp = state.rothLivePrices && state.rothLivePrices[h.ticker];
+        const isLive = !!lp;
         html+=`<div class="holding-row">
           <div>
-            <div class="holding-ticker">${h.ticker}</div>
+            <div style="display:flex;align-items:center;gap:6px">
+              <div class="holding-ticker">${h.ticker}</div>
+              ${isLive?`<span style="font-size:9px;padding:2px 5px;border-radius:4px;background:rgba(63,185,80,0.15);color:var(--green);font-family:'DM Mono',monospace">LIVE</span>`:''}
+            </div>
             <div class="holding-name">${h.name}</div>
             <div class="holding-shares">${h.shares.toFixed(4)} shares @ ${fmt(h.currentPrice)}</div>
+            ${isLive?`<div style="font-size:11px;font-family:'DM Mono',monospace;margin-top:2px;color:${lp.change>=0?'var(--green)':'var(--red)'}">Today: ${lp.change>=0?'+':''}${fmt(lp.change)} (${lp.changePct>=0?'+':''}${lp.changePct?.toFixed(2)}%)</div>`:`<div style="font-size:10px;color:var(--blue);cursor:pointer;font-family:'DM Mono',monospace;margin-top:3px" onclick="openUpdatePrice('${h.ticker}',${h.currentPrice})">update manually</div>`}
           </div>
           <div style="flex:1"></div>
           <div class="holding-val">
             <div class="holding-price">${fmt(h.currentValue)}</div>
             <div class="holding-gain ${h.gainPct>=0?'gain-pos':'gain-neg'}">${h.gainPct>=0?'▲':'▼'} ${fmt(Math.abs(h.gain))} (${fmtPct(h.gainPct)})</div>
-            <div style="font-size:10px;color:var(--blue);cursor:pointer;font-family:'DM Mono',monospace;margin-top:3px;text-align:right" onclick="openUpdatePrice('${h.ticker}',${h.currentPrice})">update price</div>
           </div>
         </div>`;
       });
