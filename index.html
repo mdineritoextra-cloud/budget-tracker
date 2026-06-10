@@ -797,6 +797,14 @@
       opacity: 0.5;
     }
 
+    .trade-edit {
+      font-size: 10px;
+      color: var(--blue);
+      cursor: pointer;
+      font-family: 'DM Mono', monospace;
+      opacity: 0.7;
+    }
+
     .mini-chart {
       display: flex;
       align-items: flex-end;
@@ -1860,6 +1868,27 @@
       </div>
     </div>
 
+    <div class="modal-overlay" id="modal-edit-holding" style="display:none">
+      <div class="modal-box">
+        <div class="modal-title">Edit Holding</div>
+        <div style="font-family:'DM Mono',monospace;font-size:14px;color:var(--blue);margin-bottom:12px"
+          id="editHoldingTicker"></div>
+        <label class="field-label">Company / Fund Name</label>
+        <input type="text" id="editHoldingName" class="modal-input" />
+        <label class="field-label">Shares</label>
+        <input type="number" id="editHoldingShares" step="0.0001" class="modal-input" />
+        <label class="field-label">Average Cost per Share ($)</label>
+        <input type="number" id="editHoldingAvgCost" step="0.01" class="modal-input"
+          style="font-family:'DM Serif Display',serif;font-size:22px" />
+        <label class="field-label">Current Price ($)</label>
+        <input type="number" id="editHoldingPrice" step="0.01" class="modal-input" />
+        <div class="modal-actions">
+          <button class="btn-cancel" onclick="closeModal('edit-holding')">Cancel</button>
+          <button class="btn-save-yellow" onclick="saveEditHolding()">Save Changes</button>
+        </div>
+      </div>
+    </div>
+
     <!-- BROKERAGE MODALS -->
     <div class="modal-overlay" id="modal-broker-account" style="display:none">
       <div class="modal-box">
@@ -1935,6 +1964,26 @@
         <div class="modal-actions">
           <button class="btn-cancel" onclick="closeModal('broker-price')">Cancel</button>
           <button class="btn-save" onclick="saveBrokerPrice()">Update</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="modal-edit-broker-position" style="display:none">
+      <div class="modal-box">
+        <div class="modal-title">Edit Position</div>
+        <div id="editPosTicker" style="font-family:'DM Mono',monospace;font-size:14px;color:var(--blue);margin-bottom:12px"></div>
+        <label class="field-label">Company / Fund Name</label>
+        <input type="text" id="editPosName" class="modal-input" />
+        <label class="field-label">Shares</label>
+        <input type="number" id="editPosShares" step="0.0001" class="modal-input" />
+        <label class="field-label">Average Cost per Share ($)</label>
+        <input type="number" id="editPosAvgCost" step="0.01" class="modal-input"
+          style="font-family:'DM Serif Display',serif;font-size:22px" />
+        <label class="field-label">Current Price ($)</label>
+        <input type="number" id="editPosPrice" step="0.01" class="modal-input" />
+        <div class="modal-actions">
+          <button class="btn-cancel" onclick="closeModal('edit-broker-position')">Cancel</button>
+          <button class="btn-save-green" onclick="saveEditBrokerPosition()">Save Changes</button>
         </div>
       </div>
     </div>
@@ -2183,11 +2232,13 @@
         savingsTab: "accounts",
         // Roth IRA
         trades: [], tradeType: "buy", rothTab: "dashboard", updatingTicker: null,
+        editingTradeId: null, editingHoldingTicker: null,
         rothLivePrices: {}, rothLivePricesUpdatedAt: "",
         // Brokerage
         brokerageAccounts: [], brokerageTab: "accounts", brokerTxnType: "buy",
         livePrices: {}, livePricesUpdatedAt: "",
         filterBrokerAcc: null, updatingBrokerPos: null,
+        editingBrokerTxn: null, editingBrokerPos: null,
         // 401k
         retirement: {
           plans: [],          // [{id, name, employer, provider, employeeYTD, employerYTD, vestingPct, contributions:[], funds:[]}]
@@ -3418,7 +3469,7 @@
 
           // Log trade button
           html += `<div style="display:flex;gap:10px;margin-top:4px">
-      <button class="submit-btn ready-yellow" style="flex:1" onclick="openModal('trade')">+ Log New Trade</button>
+      <button class="submit-btn ready-yellow" style="flex:1" onclick="openAddTrade()">+ Log New Trade</button>
     </div>`;
 
         } else if (tab === 'holdings') {
@@ -3429,7 +3480,7 @@
       </div>
       <div style="display:flex;gap:8px">
         <button class="section-action" style="color:var(--yellow);border:1px solid rgba(227,179,65,0.3);padding:4px 10px;border-radius:8px" onclick="fetchRothLivePrices()" id="rothLivePriceBtn">⟳ Live Prices</button>
-        <button class="section-action" onclick="openModal('trade')">+ Log Trade</button>
+        <button class="section-action" onclick="openAddTrade()">+ Log Trade</button>
       </div>
     </div>`;
           if (holdings.length === 0) {
@@ -3452,6 +3503,7 @@
           <div class="holding-val">
             <div class="holding-price">${fmt(h.currentValue)}</div>
             <div class="holding-gain ${h.gainPct >= 0 ? 'gain-pos' : 'gain-neg'}">${h.gainPct >= 0 ? '▲' : '▼'} ${fmt(Math.abs(h.gain))} (${fmtPct(h.gainPct)})</div>
+            <div class="trade-edit" onclick="openEditHolding('${h.ticker}')">edit</div>
           </div>
         </div>`;
             });
@@ -3461,7 +3513,7 @@
           html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
       <div class="section-label" style="margin-bottom:0">Trade Log</div>
       <div style="display:flex;gap:8px">
-        <button class="section-action" onclick="openModal('trade')">+ Log Trade</button>
+        <button class="section-action" onclick="openAddTrade()">+ Log Trade</button>
       </div>
     </div>`;
           if (state.trades.length === 0) {
@@ -3479,7 +3531,10 @@
           </div>
           <div style="text-align:right">
             <div class="trade-total" style="color:${t.type === 'buy' ? 'var(--red)' : 'var(--green)'}">${t.type === 'buy' ? '-' : '+'} ${fmt(total)}</div>
-            <div class="trade-delete" onclick="deleteTrade(${t.id})">delete</div>
+            <div style="display:flex;gap:8px;justify-content:flex-end">
+              <div class="trade-edit" onclick="openEditTrade(${t.id})">edit</div>
+              <div class="trade-delete" onclick="deleteTrade(${t.id})">delete</div>
+            </div>
           </div>
         </div>`;
             });
@@ -3763,6 +3818,7 @@
           <div class="holding-val">
             <div class="pos-val">${fmt(val)}</div>
             <div class="pos-gain ${gain >= 0 ? 'gain-pos' : 'gain-neg'}">${gain >= 0 ? '▲' : '▼'} ${fmt(Math.abs(gain))} (${fmtPct(gainPct)})</div>
+            <div class="trade-edit" onclick="openEditBrokerPosition(${p.accId},${p.id})">edit</div>
           </div>
         </div>`;
             });
@@ -3801,7 +3857,10 @@
           </div>
           <div style="text-align:right">
             <div style="font-family:'DM Serif Display',serif;font-size:14px;color:${t.type === 'buy' || t.type === 'fee' || t.type === 'withdraw' ? 'var(--red)' : 'var(--green)'}">${t.type === 'sell' || t.type === 'dividend' || t.type === 'deposit' ? '+' : '-'}${fmt(Math.abs(t.amount || t.shares * t.price))}</div>
-            <div style="font-size:10px;color:var(--muted);cursor:pointer;font-family:'DM Mono',monospace" onclick="deleteBrokerTxn(${t.id},${t.accId})">delete</div>
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:2px">
+              <div class="trade-edit" onclick="openEditBrokerTxn(${t.accId},${t.id})">edit</div>
+              <div class="trade-delete" onclick="deleteBrokerTxn(${t.id},${t.accId})">delete</div>
+            </div>
           </div>
         </div>`;
             });
@@ -4142,6 +4201,7 @@
       }
 
       function openBrokerTxn(preAccId) {
+        state.editingBrokerTxn = null;
         // Populate account dropdown
         const sel = document.getElementById("brokerTxnAccount");
         sel.innerHTML = state.brokerageAccounts.map(a => `<option value="${a.id}" ${preAccId === a.id ? 'selected' : ''}>${a.name}</option>`).join("");
@@ -4157,7 +4217,62 @@
         document.getElementById("brokerTxnTypeGrid").innerHTML = BROKER_TXN_TYPES.map(t => `
     <button class="toggle-btn ${t.id === 'buy' ? 'active-buy' : ''}" id="btt-${t.id}" onclick="setBrokerTxnType('${t.id}')">${t.label}</button>
   `).join("");
+        document.querySelector("#modal-broker-txn .modal-title").textContent = "Log Transaction";
+        document.querySelector("#modal-broker-txn .btn-save-green").textContent = "Log";
         openModal("broker-txn");
+      }
+
+      function openEditBrokerTxn(accId, txnId) {
+        const acc = state.brokerageAccounts.find(a => a.id === accId);
+        if (!acc) return;
+        const t = (acc.transactions || []).find(x => x.id === txnId);
+        if (!t) return;
+        state.editingBrokerTxn = { accId, txnId };
+        const sel = document.getElementById("brokerTxnAccount");
+        sel.innerHTML = state.brokerageAccounts.map(a => `<option value="${a.id}" ${a.id === accId ? 'selected' : ''}>${a.name}</option>`).join("");
+        document.getElementById("brokerTxnDate").value = t.date || todayStr();
+        document.getElementById("brokerTxnTicker").value = t.ticker || "";
+        document.getElementById("brokerTxnName").value = t.name || "";
+        document.getElementById("brokerTxnShares").value = t.shares || "";
+        document.getElementById("brokerTxnPrice").value = t.price || "";
+        document.getElementById("brokerTxnAmt").value = t.amount || "";
+        document.getElementById("brokerTxnNotes").value = t.notes || "";
+        document.getElementById("brokerTxnTypeGrid").innerHTML = BROKER_TXN_TYPES.map(tt => `
+    <button class="toggle-btn ${tt.id === t.type ? (t.type === 'buy' ? 'active-buy' : t.type === 'sell' ? 'active-sell' : 'active-buy') : ''}" id="btt-${tt.id}" onclick="setBrokerTxnType('${tt.id}')">${tt.label}</button>
+  `).join("");
+        setBrokerTxnType(t.type);
+        document.querySelector("#modal-broker-txn .modal-title").textContent = "Edit Transaction";
+        document.querySelector("#modal-broker-txn .btn-save-green").textContent = "Save Changes";
+        openModal("broker-txn");
+      }
+
+      // Rebuilds an account's positions from its buy/sell transaction history,
+      // preserving each ticker's currentPrice/updatedAt where possible.
+      function recomputeBrokerPositions(acc) {
+        const prev = {};
+        (acc.positions || []).forEach(p => { prev[p.ticker] = p; });
+        const map = {};
+        [...(acc.transactions || [])]
+          .filter(t => t.type === "buy" || t.type === "sell")
+          .sort((a, b) => new Date(a.date) - new Date(b.date))
+          .forEach(t => {
+            if (!map[t.ticker]) map[t.ticker] = { ticker: t.ticker, name: t.name || t.ticker, shares: 0, avgCost: 0 };
+            const pos = map[t.ticker];
+            if (t.type === "buy") {
+              const totalCost = pos.shares * pos.avgCost + t.shares * t.price;
+              pos.shares += t.shares;
+              pos.avgCost = pos.shares > 0 ? totalCost / pos.shares : 0;
+            } else {
+              pos.shares = Math.max(0, pos.shares - t.shares);
+            }
+            pos.name = t.name || pos.name;
+          });
+        acc.positions = Object.values(map).map(p => ({
+          id: (prev[p.ticker] && prev[p.ticker].id) || (Date.now() + Math.floor(Math.random() * 1000)),
+          ticker: p.ticker, name: p.name, shares: p.shares, avgCost: p.avgCost,
+          currentPrice: (prev[p.ticker] && prev[p.ticker].currentPrice) || p.avgCost,
+          updatedAt: (prev[p.ticker] && prev[p.ticker].updatedAt) || todayStr(),
+        }));
       }
 
       function setBrokerTxnType(type) {
@@ -4184,40 +4299,56 @@
         if (isBuySell && (!ticker || !shares || !price)) return;
         if (!isBuySell && !amt) return;
 
-        const txn = {
-          id: Date.now(), type, ticker: ticker || "", shares, price, amount: amt || shares * price,
+        const txnData = {
+          type, ticker: ticker || "", shares, price, amount: amt || shares * price,
           name: document.getElementById("brokerTxnName").value.trim() || ticker,
           date: document.getElementById("brokerTxnDate").value || todayStr(),
           notes: document.getElementById("brokerTxnNotes").value.trim(),
         };
-        acc.transactions.push(txn);
 
-        // Update positions
-        if (isBuySell) {
-          let pos = acc.positions.find(p => p.ticker === ticker);
-          if (!pos) {
-            pos = { id: Date.now() + 1, ticker, name: txn.name, shares: 0, avgCost: 0, currentPrice: price, updatedAt: todayStr() };
-            acc.positions.push(pos);
+        if (state.editingBrokerTxn) {
+          const { accId: oldAccId, txnId } = state.editingBrokerTxn;
+          const oldAcc = state.brokerageAccounts.find(a => a.id === oldAccId);
+          if (oldAcc) {
+            oldAcc.transactions = (oldAcc.transactions || []).filter(t => t.id !== txnId);
+            recomputeBrokerPositions(oldAcc);
           }
-          if (type === 'buy') {
-            const totalCost = pos.shares * pos.avgCost + shares * price;
-            pos.shares += shares;
-            pos.avgCost = pos.shares > 0 ? totalCost / pos.shares : 0;
-            pos.currentPrice = price;
-          } else {
-            pos.shares = Math.max(0, pos.shares - shares);
+          acc.transactions = acc.transactions || [];
+          acc.transactions.push({ id: txnId, ...txnData });
+          recomputeBrokerPositions(acc);
+          state.editingBrokerTxn = null;
+          showToast("Transaction updated", "#e3b341");
+        } else {
+          const txn = { id: Date.now(), ...txnData };
+          acc.transactions.push(txn);
+          if (isBuySell) {
+            let pos = acc.positions.find(p => p.ticker === ticker);
+            if (!pos) {
+              pos = { id: Date.now() + 1, ticker, name: txn.name, shares: 0, avgCost: 0, currentPrice: price, updatedAt: todayStr() };
+              acc.positions.push(pos);
+            }
+            if (type === 'buy') {
+              const totalCost = pos.shares * pos.avgCost + shares * price;
+              pos.shares += shares;
+              pos.avgCost = pos.shares > 0 ? totalCost / pos.shares : 0;
+              pos.currentPrice = price;
+            } else {
+              pos.shares = Math.max(0, pos.shares - shares);
+            }
+            pos.updatedAt = todayStr();
           }
-          pos.updatedAt = todayStr();
+          showToast(`${type === 'buy' ? 'Bought' : type === 'sell' ? 'Sold' : type} logged!`, type === 'buy' ? "#3fb950" : type === 'sell' ? "#f85149" : "#e3b341");
         }
 
         saveBrokerageLocal(); closeModal("broker-txn"); renderHeader(); renderView();
-        showToast(`${type === 'buy' ? 'Bought' : type === 'sell' ? 'Sold' : type} logged!`, type === 'buy' ? "#3fb950" : type === 'sell' ? "#f85149" : "#e3b341");
       }
 
       function deleteBrokerTxn(txnId, accId) {
         const acc = state.brokerageAccounts.find(a => a.id === accId);
         if (!acc) return;
+        const txn = acc.transactions.find(t => t.id === txnId);
         acc.transactions = acc.transactions.filter(t => t.id !== txnId);
+        if (txn && (txn.type === "buy" || txn.type === "sell")) recomputeBrokerPositions(acc);
         saveBrokerageLocal(); renderView();
         showToast("Deleted", "#f85149");
       }
@@ -4240,6 +4371,38 @@
         }
         saveBrokerageLocal(); closeModal("broker-price"); renderHeader(); renderView();
         showToast("Price updated!", "#58a6ff");
+      }
+
+      function openEditBrokerPosition(accId, posId) {
+        const acc = state.brokerageAccounts.find(a => a.id === accId);
+        if (!acc) return;
+        const pos = (acc.positions || []).find(p => p.id === posId);
+        if (!pos) return;
+        state.editingBrokerPos = { accId, posId };
+        document.getElementById("editPosTicker").textContent = pos.ticker;
+        document.getElementById("editPosName").value = pos.name || pos.ticker;
+        document.getElementById("editPosShares").value = pos.shares;
+        document.getElementById("editPosAvgCost").value = pos.avgCost;
+        document.getElementById("editPosPrice").value = pos.currentPrice;
+        openModal("edit-broker-position");
+      }
+
+      function saveEditBrokerPosition() {
+        if (!state.editingBrokerPos) return;
+        const { accId, posId } = state.editingBrokerPos;
+        const acc = state.brokerageAccounts.find(a => a.id === accId);
+        if (!acc) return;
+        const pos = (acc.positions || []).find(p => p.id === posId);
+        if (!pos) return;
+        const shares = parseFloat(document.getElementById("editPosShares").value);
+        const avgCost = parseFloat(document.getElementById("editPosAvgCost").value);
+        const currentPrice = parseFloat(document.getElementById("editPosPrice").value) || avgCost;
+        const name = document.getElementById("editPosName").value.trim() || pos.ticker;
+        if (isNaN(shares) || shares < 0 || isNaN(avgCost) || avgCost < 0) return;
+        pos.name = name; pos.shares = shares; pos.avgCost = avgCost; pos.currentPrice = currentPrice; pos.updatedAt = todayStr();
+        state.editingBrokerPos = null;
+        saveBrokerageLocal(); closeModal("edit-broker-position"); renderHeader(); renderView();
+        showToast(`${pos.ticker} position updated`, "#3fb950");
       }
 
       function saveNewAccount() {
@@ -4335,30 +4498,68 @@
         document.getElementById("tbSell").className = "toggle-btn" + (type === "sell" ? " active-sell" : "");
       }
 
+      function openAddTrade() {
+        state.editingTradeId = null;
+        document.getElementById("tradeTicker").value = "";
+        document.getElementById("tradeName").value = "";
+        document.getElementById("tradeShares").value = "";
+        document.getElementById("tradePrice").value = "";
+        document.getElementById("tradeCurrent").value = "";
+        document.getElementById("tradeDate").value = todayStr();
+        document.getElementById("tradeNotes").value = "";
+        setTradeType("buy");
+        document.querySelector("#modal-trade .modal-title").textContent = "Log Trade";
+        document.querySelector("#modal-trade .btn-save-yellow").textContent = "Log Trade";
+        openModal("trade");
+      }
+
+      function openEditTrade(id) {
+        const t = state.trades.find(tr => tr.id === id);
+        if (!t) return;
+        state.editingTradeId = id;
+        document.getElementById("tradeTicker").value = t.ticker;
+        document.getElementById("tradeName").value = t.name || "";
+        document.getElementById("tradeShares").value = t.shares;
+        document.getElementById("tradePrice").value = t.price;
+        document.getElementById("tradeCurrent").value = t.currentPrice || "";
+        document.getElementById("tradeDate").value = t.date || todayStr();
+        document.getElementById("tradeNotes").value = t.notes || "";
+        setTradeType(t.type);
+        document.querySelector("#modal-trade .modal-title").textContent = "Edit Trade";
+        document.querySelector("#modal-trade .btn-save-yellow").textContent = "Save Changes";
+        openModal("trade");
+      }
+
       function saveTrade() {
         const ticker = document.getElementById("tradeTicker").value.trim().toUpperCase();
         const shares = parseFloat(document.getElementById("tradeShares").value);
         const price = parseFloat(document.getElementById("tradePrice").value);
         if (!ticker || !shares || !price) return;
         const currentPrice = parseFloat(document.getElementById("tradeCurrent").value) || price;
-        const trade = {
-          id: Date.now(), type: state.tradeType, ticker,
+        const tradeData = {
+          type: state.tradeType, ticker,
           name: document.getElementById("tradeName").value.trim() || ticker,
           shares, price, currentPrice,
           date: document.getElementById("tradeDate").value || todayStr(),
           notes: document.getElementById("tradeNotes").value.trim(),
         };
-        state.trades.push(trade);
+        if (state.editingTradeId != null) {
+          const idx = state.trades.findIndex(t => t.id === state.editingTradeId);
+          if (idx === -1) return;
+          state.trades[idx] = { ...state.trades[idx], ...tradeData };
+          state.editingTradeId = null;
+          showToast(`Trade updated`, "#e3b341");
+        } else {
+          state.trades.push({ id: Date.now(), ...tradeData });
+          showToast(`${state.tradeType === "buy" ? "Bought" : "Sold"} ${shares} ${ticker} @ ${fmt(price)}`, "#e3b341");
+        }
         state.trades.forEach(t => { if (t.ticker === ticker) t.currentPrice = currentPrice; });
         saveTradesLocal(); closeModal("trade"); renderHeader(); renderView();
-        showToast(`${state.tradeType === "buy" ? "Bought" : "Sold"} ${shares} ${ticker} @ ${fmt(price)}`, "#e3b341");
-        tradesSheetAdd(trade).catch(() => { });
       }
 
       function deleteTrade(id) {
         state.trades = state.trades.filter(t => t.id !== id);
         saveTradesLocal(); renderHeader(); renderView(); showToast("Trade deleted", "#f85149");
-        tradesSheetDelete(id).catch(() => { });
       }
 
       function openUpdatePrice(ticker, currentPrice) {
@@ -4376,6 +4577,40 @@
         sheetsUpdatePrice(state.updatingTicker, price).catch(() => { });
         closeModal("update-price"); renderHeader(); renderView();
         showToast(`${state.updatingTicker} updated to ${fmt(price)}`, "#e3b341");
+      }
+
+      function openEditHolding(ticker) {
+        const h = getHoldings(state.trades).find(x => x.ticker === ticker);
+        if (!h) return;
+        state.editingHoldingTicker = ticker;
+        document.getElementById("editHoldingTicker").textContent = ticker;
+        document.getElementById("editHoldingName").value = h.name;
+        document.getElementById("editHoldingShares").value = h.shares;
+        document.getElementById("editHoldingAvgCost").value = h.shares > 0 ? (h.costBasis / h.shares).toFixed(4) : 0;
+        document.getElementById("editHoldingPrice").value = h.currentPrice;
+        openModal("edit-holding");
+      }
+
+      function saveEditHolding() {
+        const ticker = state.editingHoldingTicker;
+        if (!ticker) return;
+        const shares = parseFloat(document.getElementById("editHoldingShares").value);
+        const avgCost = parseFloat(document.getElementById("editHoldingAvgCost").value);
+        const currentPrice = parseFloat(document.getElementById("editHoldingPrice").value) || avgCost;
+        const name = document.getElementById("editHoldingName").value.trim() || ticker;
+        if (!shares || shares <= 0 || !avgCost || avgCost <= 0) return;
+        // Replace all existing trades for this ticker with a single trade
+        // reflecting the edited shares/cost basis, preserving the ticker's history date.
+        const existing = state.trades.find(t => t.ticker === ticker);
+        state.trades = state.trades.filter(t => t.ticker !== ticker);
+        state.trades.push({
+          id: Date.now(), type: "buy", ticker, name, shares, price: avgCost, currentPrice,
+          date: (existing && existing.date) || todayStr(),
+          notes: "Adjusted holding",
+        });
+        state.editingHoldingTicker = null;
+        saveTradesLocal(); closeModal("edit-holding"); renderHeader(); renderView();
+        showToast(`${ticker} holding updated`, "#e3b341");
       }
 
       // ---- MONTH MANAGEMENT ----
