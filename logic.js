@@ -50,7 +50,14 @@ function getNextDue(r, now = new Date()) {
   while (next <= today) {
     if (r.frequency === "weekly") next.setDate(next.getDate() + 7);
     else if (r.frequency === "biweekly") next.setDate(next.getDate() + 14);
-    else if (r.frequency === "monthly") { next.setMonth(next.getMonth() + 1); if (r.day) next.setDate(Math.min(r.day, new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate())); }
+    else if (r.frequency === "monthly") {
+      // Pin to the 1st before advancing the month so a day-29/30/31 date
+      // can't overflow into the following month (e.g. Jan 31 -> Mar 3).
+      const targetDay = r.day || next.getDate();
+      next.setDate(1);
+      next.setMonth(next.getMonth() + 1);
+      next.setDate(Math.min(targetDay, new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate()));
+    }
     else if (r.frequency === "quarterly") next.setMonth(next.getMonth() + 3);
     else if (r.frequency === "yearly") next.setFullYear(next.getFullYear() + 1);
     else break;
@@ -105,6 +112,65 @@ function get401kValue(plan) {
   return plan.balance || (plan.contributions || []).reduce((s, c) => s + c.amount, 0);
 }
 
+// Computes the new card settings and any "CC Carryover" expenses that
+// should be created when rolling from one month to the next. Cards with no
+// existing settings are left untouched; cards with an unpaid balance carry
+// it forward and generate a carryover expense in the new month.
+function computeCCRollover(cardSettings, creditCards, fromMonth, toMonth, userName, now = new Date()) {
+  const newSettings = { ...cardSettings };
+  const carryoverExpenses = [];
+  creditCards.forEach(cc => {
+    const s = cardSettings[cc.name];
+    if (!s) return;
+    const updated = { ...s };
+    if (s.unpaid && s.balance > 0) {
+      updated.carriedBalance = (s.carriedBalance || 0) + s.balance;
+      updated.carryHistory = [...(s.carryHistory || []), { month: fromMonth, amount: s.balance, date: now.toISOString() }];
+      carryoverExpenses.push({
+        id: now.getTime() + carryoverExpenses.length,
+        amount: s.balance,
+        category: "💳 CC Carryover",
+        note: `${cc.name} unpaid balance from ${fromMonth}`,
+        placeName: "", transactionDate: toMonth + "-01",
+        date: now.toISOString(),
+        userName: userName,
+        creditCard: cc.name,
+        isCarryover: true,
+      });
+    } else {
+      updated.carriedBalance = 0;
+    }
+    updated.balance = 0;
+    updated.unpaid = false;
+    newSettings[cc.name] = updated;
+  });
+  return { cardSettings: newSettings, carryoverExpenses };
+}
+
+// Builds the CSV text used by exportCSV (everything except the
+// browser-only Blob/download step).
+function buildExpenseCSV(expenses, savingsAccounts, currency = "USD") {
+  const header = ["Date", "Amount", "Currency", "Category", "Description", "Place", "Card", "User"];
+  const lines = [header.join(",")];
+  expenses.forEach(e => {
+    lines.push([
+      e.transactionDate || e.date || "",
+      e.amount || 0,
+      currency,
+      `"${(e.category || "").replace(/"/g, '""')}"`,
+      `"${(e.note || "").replace(/"/g, '""')}"`,
+      `"${(e.placeName || "").replace(/"/g, '""')}"`,
+      `"${(e.creditCard || "").replace(/"/g, '""')}"`,
+      `"${(e.userName || "").replace(/"/g, '""')}"`,
+    ].join(","));
+  });
+  lines.push("", "# SAVINGS ACCOUNTS", "Account,Bank,Balance,Goal");
+  (savingsAccounts || []).forEach(a => {
+    lines.push(`"${a.name}","${a.bank || ""}",${a.balance},${a.goal || 0}`);
+  });
+  return lines.join("\n");
+}
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     amortize,
@@ -118,5 +184,7 @@ if (typeof module !== "undefined" && module.exports) {
     getBrokerAccountValue,
     getBrokerAccountCost,
     get401kValue,
+    computeCCRollover,
+    buildExpenseCSV,
   };
 }
