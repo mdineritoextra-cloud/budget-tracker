@@ -3811,7 +3811,7 @@
               <div class="pos-name" style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${p.name}</div>
               ${isLive ? `<span style="font-size:9px;padding:2px 5px;border-radius:4px;background:rgba(63,185,80,0.15);color:var(--green);font-family:'DM Mono',monospace">LIVE</span>` : ''}
             </div>
-            <div class="pos-shares">${p.shares.toFixed(4)} shares · avg ${fmt(p.avgCost)}</div>
+            <div class="pos-shares">${p.shares.toFixed(4)} shares · avg ${fmt(p.avgCost)} · price ${fmt(p.currentPrice)}</div>
             ${isLive ? `<div style="font-size:11px;font-family:'DM Mono',monospace;margin-top:2px;color:${dayChange >= 0 ? 'var(--green)' : 'var(--red)'}">Today: ${dayChange >= 0 ? '+' : ''}${fmt(dayChange)} (${dayChangePct >= 0 ? '+' : ''}${dayChangePct?.toFixed(2)}%)</div>` : '<div style="font-size:11px;color:var(--muted);font-family:\'DM Mono\',monospace;margin-top:2px;cursor:pointer" onclick="openBrokerPriceUpdate(' + p.id + ',' + p.accId + ',\'' + p.ticker + '\',' + p.currentPrice + ')">update price manually</div>'}
             ${!filterAcc ? `<div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;margin-top:2px">${p.accName}</div>` : ''}
           </div>
